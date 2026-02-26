@@ -167,17 +167,18 @@ struct TabBarItem: View {
         HStack(spacing: 6) {
             Image(systemName: "doc.text")
                 .font(.system(size: 11))
-                .foregroundColor(.secondary)
+                .foregroundColor(isSelected ? .accentColor : .secondary)
 
             Text(tab.name)
-                .font(.system(size: 12))
+                .font(.system(size: 12, weight: isSelected ? .semibold : .regular))
+                .foregroundColor(isSelected ? .primary : .secondary)
                 .lineLimit(1)
                 .truncationMode(.tail)
 
             Button(action: onClose) {
                 Image(systemName: "xmark")
                     .font(.system(size: 9, weight: .medium))
-                    .foregroundColor(.secondary)
+                    .foregroundColor(isSelected ? .primary : .secondary)
                     .frame(width: 16, height: 16)
             }
             .buttonStyle(.plain)
@@ -187,7 +188,11 @@ struct TabBarItem: View {
         .padding(.vertical, 6)
         .background(
             RoundedRectangle(cornerRadius: 6)
-                .fill(isSelected ? Color(nsColor: .controlBackgroundColor) : Color.clear)
+                .fill(isSelected ? Color.accentColor.opacity(0.15) : (isHovering ? Color(nsColor: .controlBackgroundColor) : Color.clear))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 6)
+                .stroke(isSelected ? Color.accentColor.opacity(0.5) : Color.clear, lineWidth: 1)
         )
         .contentShape(Rectangle())
         .onTapGesture(perform: onSelect)

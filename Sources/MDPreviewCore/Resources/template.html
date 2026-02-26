@@ -183,6 +183,14 @@
             var html = marked.parse(markdown || '');
             document.getElementById('content').innerHTML = html;
 
+            // Add IDs to headings for anchor links
+            document.querySelectorAll('h1, h2, h3, h4, h5, h6').forEach(function(heading) {
+                var slug = heading.textContent.toLowerCase()
+                    .replace(/[^a-z0-9\s-]/g, '')
+                    .replace(/\s+/g, '-');
+                heading.id = slug;
+            });
+
             // Apply syntax highlighting to code blocks
             document.querySelectorAll('pre code').forEach(function(block) {
                 hljs.highlightElement(block);
@@ -193,6 +201,13 @@
             if (scrollHeight > 0 && scrollY > 0) {
                 var ratio = scrollY / scrollHeight;
                 window.scrollTo(0, ratio * newScrollHeight);
+            }
+        }
+
+        function scrollToAnchor(anchor) {
+            var element = document.getElementById(anchor);
+            if (element) {
+                element.scrollIntoView({ behavior: 'smooth', block: 'start' });
             }
         }
     </script>

@@ -181,6 +181,32 @@ public struct MarkdownWebView: NSViewRepresentable {
         public var isLoaded = false
         public var pendingContent: String?
         public var baseURL: URL?
+        private var scrollObserver: NSObjectProtocol?
+
+        override init() {
+            super.init()
+            // Listen for scroll to anchor notifications
+            scrollObserver = NotificationCenter.default.addObserver(
+                forName: .scrollToAnchor,
+                object: nil,
+                queue: .main
+            ) { [weak self] notification in
+                guard let anchor = notification.object as? String else { return }
+                self?.scrollToAnchor(anchor)
+            }
+        }
+
+        deinit {
+            if let observer = scrollObserver {
+                NotificationCenter.default.removeObserver(observer)
+            }
+        }
+
+        private func scrollToAnchor(_ anchor: String) {
+            guard let webView = webView else { return }
+            let escapedAnchor = anchor.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? anchor
+            webView.evaluateJavaScript("scrollToAnchor('\(escapedAnchor)')")
+        }
 
         public func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
             isLoaded = true
