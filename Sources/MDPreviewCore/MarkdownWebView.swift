@@ -47,11 +47,21 @@ public struct MarkdownWebView: NSViewRepresentable {
     }
 
     private func loadTemplate(into webView: WKWebView, baseURL: URL?) {
-        guard let resourceURL = Bundle.module.url(
-            forResource: "template",
-            withExtension: "html",
-            subdirectory: "Resources"
-        ) else {
+        // Find template.html - check app bundle locations first to avoid triggering
+        // Bundle.module's resource_bundle_accessor which crashes in packaged apps
+        let possibleURLs: [URL?] = [
+            // App bundle: MDPreview_MDPreviewCore.bundle/Resources/template.html
+            Bundle.main.url(forResource: "MDPreview_MDPreviewCore", withExtension: "bundle")?
+                .appendingPathComponent("Resources/template.html"),
+            // Direct in Resources folder
+            Bundle.main.resourceURL?.appendingPathComponent("MDPreview_MDPreviewCore.bundle/Resources/template.html"),
+            // Fallback: try root Resources
+            Bundle.main.url(forResource: "template", withExtension: "html"),
+            // Last resort: Bundle.module (only works in SPM builds/tests)
+            safeModuleURL(forResource: "template", withExtension: "html", subdirectory: "Resources")
+        ]
+
+        guard let resourceURL = possibleURLs.compactMap({ $0 }).first(where: { FileManager.default.fileExists(atPath: $0.path) }) else {
             return
         }
 
@@ -64,6 +74,26 @@ public struct MarkdownWebView: NSViewRepresentable {
         }
 
         webView.loadFileURL(resourceURL, allowingReadAccessTo: readAccessURL)
+    }
+
+    /// Safely access Bundle.module without crashing in packaged apps
+    private func safeModuleURL(forResource name: String, withExtension ext: String?, subdirectory: String?) -> URL? {
+        // Only use Bundle.module if we're not in a packaged app
+        // Check if Bundle.main has an Info.plist (indicates packaged app)
+        guard Bundle.main.infoDictionary != nil,
+              Bundle.main.bundleIdentifier != nil else {
+            // Not a packaged app, safe to use Bundle.module
+            return Bundle.module.url(forResource: name, withExtension: ext, subdirectory: subdirectory)
+        }
+
+        // In packaged app, try to find the module bundle manually
+        let moduleName = "MDPreview_MDPreviewCore"
+        if let bundleURL = Bundle.main.url(forResource: moduleName, withExtension: "bundle") {
+            if let bundle = Bundle(url: bundleURL) {
+                return bundle.url(forResource: name, withExtension: ext, subdirectory: subdirectory)
+            }
+        }
+        return nil
     }
 
     private func evaluateRender(webView: WKWebView, content: String, baseURL: URL? = nil) {

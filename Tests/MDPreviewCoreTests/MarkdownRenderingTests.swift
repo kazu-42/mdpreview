@@ -23,6 +23,16 @@ final class MarkdownRenderingTests: XCTestCase {
             "template.html should contain the render(markdown, basePath) function")
     }
 
+    func testTemplateHTMLContainsBaseTagHandling() throws {
+        let url = try XCTUnwrap(
+            Bundle.module.url(forResource: "template", withExtension: "html", subdirectory: "Resources")
+        )
+        let content = try String(contentsOf: url, encoding: .utf8)
+        // Verify that the render function handles base URL for relative image paths
+        XCTAssertTrue(content.contains("base.href = 'file://' + basePath"),
+            "template.html should set base href for relative path resolution")
+    }
+
     func testTemplateHTMLContainsMarkedSetup() throws {
         let url = try XCTUnwrap(
             Bundle.module.url(forResource: "template", withExtension: "html", subdirectory: "Resources")
