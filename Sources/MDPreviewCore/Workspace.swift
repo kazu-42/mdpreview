@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import UniformTypeIdentifiers
 
 public struct TabItem: Identifiable, Equatable {
     public let id = UUID()
@@ -13,6 +14,8 @@ public struct TabItem: Identifiable, Equatable {
 }
 
 public final class Workspace: ObservableObject {
+    // MARK: - Published State
+
     @Published public var tabs: [TabItem] = []
     @Published public var selectedTabID: UUID?
     @Published public var directoryURL: URL?
@@ -20,9 +23,17 @@ public final class Workspace: ObservableObject {
     @Published public var markdownContent: String = ""
     @Published public var errorMessage: String?
 
+    /// Computed property for showing error alerts
+    public var showError: Bool {
+        get { errorMessage != nil }
+        set { if !newValue { errorMessage = nil } }
+    }
+
     private let fileWatcher = FileWatcher()
 
     public init() {}
+
+    // MARK: - Computed Properties
 
     public var selectedTab: TabItem? {
         guard let id = selectedTabID else { return nil }
@@ -46,6 +57,13 @@ public final class Workspace: ObservableObject {
 
     public func openFile(_ url: URL) {
         let standardized = url.standardizedFileURL
+
+        // Check if file is readable
+        guard FileManager.default.isReadableFile(atPath: standardized.path) else {
+            errorMessage = "Cannot read file: \(standardized.lastPathComponent)"
+            return
+        }
+
         if let existing = tabs.first(where: { $0.url.standardizedFileURL == standardized }) {
             selectTab(existing.id)
             return
@@ -63,7 +81,7 @@ public final class Workspace: ObservableObject {
     public func openURL(_ url: URL) {
         var isDir: ObjCBool = false
         guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir) else {
-            errorMessage = "File not found: \(url.path)"
+            errorMessage = "File not found: \(url.lastPathComponent)"
             return
         }
         if isDir.boolValue {
@@ -92,6 +110,11 @@ public final class Workspace: ObservableObject {
         loadContent(for: tab)
     }
 
+    public func selectTab(at index: Int) {
+        guard index >= 0, index < tabs.count else { return }
+        selectTab(tabs[index].id)
+    }
+
     public func closeTab(_ id: UUID) {
         guard let index = tabs.firstIndex(where: { $0.id == id }) else { return }
         let wasSelected = selectedTabID == id
@@ -107,6 +130,25 @@ public final class Workspace: ObservableObject {
                 selectTab(tabs[newIndex].id)
             }
         }
+    }
+
+    public func closeCurrentTab() {
+        guard let id = selectedTabID else {
+            // No tabs, close window
+            NSApp.keyWindow?.close()
+            return
+        }
+        closeTab(id)
+        if tabs.isEmpty && directoryURL == nil {
+            NSApp.keyWindow?.close()
+        }
+    }
+
+    public func closeAllTabs() {
+        tabs.removeAll()
+        selectedTabID = nil
+        markdownContent = ""
+        fileWatcher.stop()
     }
 
     public func selectNextTab() {
@@ -125,15 +167,21 @@ public final class Workspace: ObservableObject {
         selectTab(tabs[prev].id)
     }
 
+    public func toggleSidebar() {
+        // This is handled by NavigationSplitView visibility
+        NotificationCenter.default.post(name: .toggleSidebar, object: nil)
+    }
+
     // MARK: - Open Panel
 
     public func showOpenPanel() {
         let panel = NSOpenPanel()
-        panel.allowedContentTypes = [
-            .init(filenameExtension: "md")!,
-            .init(filenameExtension: "markdown")!,
-            .plainText
-        ]
+        let mdTypes: [UTType] = [
+            UTType(filenameExtension: "md"),
+            UTType(filenameExtension: "markdown")
+        ].compactMap { $0 }
+
+        panel.allowedContentTypes = mdTypes.isEmpty ? [.plainText] : mdTypes + [.plainText]
         panel.allowsMultipleSelection = true
         panel.canChooseDirectories = true
         panel.message = "Select Markdown files or a directory"
@@ -153,7 +201,7 @@ public final class Workspace: ObservableObject {
             self.markdownContent = content
             self.errorMessage = nil
         } catch {
-            self.errorMessage = error.localizedDescription
+            self.errorMessage = "Failed to load \(tab.name): \(error.localizedDescription)"
         }
 
         fileWatcher.watch(url: tab.url) { [weak self] in
@@ -171,8 +219,14 @@ public final class Workspace: ObservableObject {
             }
         } catch {
             DispatchQueue.main.async {
-                self.errorMessage = error.localizedDescription
+                self.errorMessage = "Failed to reload: \(error.localizedDescription)"
             }
         }
     }
+}
+
+// MARK: - Notification Names
+
+extension Notification.Name {
+    public static let toggleSidebar = Notification.Name("com.mdpreview.toggleSidebar")
 }

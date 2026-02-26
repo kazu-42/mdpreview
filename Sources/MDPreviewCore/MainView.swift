@@ -5,7 +5,6 @@ public struct MainView: View {
     @ObservedObject var workspace: Workspace
     @State private var columnVisibility: NavigationSplitViewVisibility = .detailOnly
     @State private var isDragOver = false
-    @State private var eventMonitor: Any?
 
     public init(workspace: Workspace) {
         self.workspace = workspace
@@ -14,7 +13,7 @@ public struct MainView: View {
     public var body: some View {
         NavigationSplitView(columnVisibility: $columnVisibility) {
             FileTreeView(nodes: workspace.fileTreeNodes, workspace: workspace)
-                .frame(minWidth: 180)
+                .frame(minWidth: sidebarWidth)
         } detail: {
             contentArea
         }
@@ -28,9 +27,18 @@ public struct MainView: View {
         .onDrop(of: [.fileURL], isTargeted: $isDragOver) { providers in
             handleDrop(providers: providers)
         }
-        .onAppear { setupKeyboardShortcuts() }
-        .onDisappear { teardownKeyboardShortcuts() }
+        .alert("Error", isPresented: $workspace.showError) {
+            Button("OK") {
+                workspace.errorMessage = nil
+            }
+        } message: {
+            Text(workspace.errorMessage ?? "An unknown error occurred")
+        }
     }
+
+    // MARK: - Constants
+
+    private let sidebarWidth: CGFloat = 200
 
     // MARK: - Content Area
 
@@ -73,52 +81,6 @@ public struct MainView: View {
         }
         return true
     }
-
-    // MARK: - Keyboard Shortcuts
-
-    private func setupKeyboardShortcuts() {
-        let ws = workspace
-        eventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
-            let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-
-            // Cmd+W: Close current tab, then close window if nothing left
-            if flags == .command, event.charactersIgnoringModifiers == "w" {
-                if let id = ws.selectedTabID {
-                    ws.closeTab(id)
-                    if ws.tabs.isEmpty && ws.directoryURL == nil {
-                        NSApp.keyWindow?.close()
-                    }
-                    return nil
-                }
-                // No tabs open - close the window
-                NSApp.keyWindow?.close()
-                return nil
-            }
-
-            // Cmd+Shift+] or Ctrl+Tab: Next tab
-            if (flags == [.command, .shift] && event.charactersIgnoringModifiers == "]") ||
-               (flags == .control && event.keyCode == 48) {
-                ws.selectNextTab()
-                return nil
-            }
-
-            // Cmd+Shift+[ or Ctrl+Shift+Tab: Previous tab
-            if (flags == [.command, .shift] && event.charactersIgnoringModifiers == "[") ||
-               (flags == [.control, .shift] && event.keyCode == 48) {
-                ws.selectPreviousTab()
-                return nil
-            }
-
-            return event
-        }
-    }
-
-    private func teardownKeyboardShortcuts() {
-        if let monitor = eventMonitor {
-            NSEvent.removeMonitor(monitor)
-            eventMonitor = nil
-        }
-    }
 }
 
 // MARK: - Empty State
@@ -127,9 +89,9 @@ public struct EmptyStateView: View {
     public init() {}
 
     public var body: some View {
-        VStack(spacing: 16) {
+        VStack(spacing: emptyStateSpacing) {
             Image(systemName: "doc.text")
-                .font(.system(size: 48, weight: .thin))
+                .font(.system(size: emptyStateIconSize, weight: .thin))
                 .foregroundColor(.secondary)
             Text("Drop a Markdown file here")
                 .font(.title3)
@@ -140,6 +102,9 @@ public struct EmptyStateView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
+
+    private let emptyStateSpacing: CGFloat = 16
+    private let emptyStateIconSize: CGFloat = 48
 }
 
 // MARK: - Tab Bar
@@ -159,14 +124,17 @@ struct TabBarView: View {
                     )
                 }
             }
-            .padding(.horizontal, 4)
+            .padding(.horizontal, tabBarPadding)
         }
-        .frame(height: 30)
+        .frame(height: tabBarHeight)
         .background(Color(nsColor: .windowBackgroundColor))
         .overlay(alignment: .bottom) {
             Divider()
         }
     }
+
+    private let tabBarHeight: CGFloat = 30
+    private let tabBarPadding: CGFloat = 4
 }
 
 struct TabBarItem: View {
@@ -177,29 +145,37 @@ struct TabBarItem: View {
     @State private var isHovering = false
 
     var body: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: tabBarItemSpacing) {
             Image(systemName: "doc.text")
-                .font(.system(size: 10))
+                .font(.system(size: tabIconSize))
                 .foregroundColor(.secondary)
             Text(tab.name)
-                .font(.system(size: 11))
+                .font(.system(size: tabTextSize))
                 .lineLimit(1)
             Button(action: onClose) {
                 Image(systemName: "xmark")
-                    .font(.system(size: 8, weight: .bold))
+                    .font(.system(size: tabCloseIconSize, weight: .bold))
                     .foregroundColor(.secondary)
             }
             .buttonStyle(.plain)
             .opacity(isSelected || isHovering ? 1 : 0)
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 5)
+        .padding(.horizontal, tabBarItemPaddingH)
+        .padding(.vertical, tabBarItemPaddingV)
         .background(
-            RoundedRectangle(cornerRadius: 6)
+            RoundedRectangle(cornerRadius: tabBarItemCornerRadius)
                 .fill(isSelected ? Color(nsColor: .controlBackgroundColor) : Color.clear)
         )
         .contentShape(Rectangle())
         .onTapGesture(perform: onSelect)
         .onHover { isHovering = $0 }
     }
+
+    private let tabBarItemSpacing: CGFloat = 4
+    private let tabIconSize: CGFloat = 10
+    private let tabTextSize: CGFloat = 11
+    private let tabCloseIconSize: CGFloat = 8
+    private let tabBarItemPaddingH: CGFloat = 10
+    private let tabBarItemPaddingV: CGFloat = 5
+    private let tabBarItemCornerRadius: CGFloat = 6
 }
