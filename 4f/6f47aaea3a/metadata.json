@@ -1,0 +1,51 @@
+{
+  "cli_version": "0.4.7",
+  "checkpoint_id": "4f6f47aaea3a",
+  "strategy": "manual-commit",
+  "branch": "main",
+  "checkpoints_count": 12,
+  "files_touched": [
+    "CHANGELOG.md",
+    "CODE_OF_CONDUCT.md",
+    "CONTRIBUTING.md",
+    "Makefile",
+    "README.de.md",
+    "README.es.md",
+    "README.fr.md",
+    "README.ja.md",
+    "README.ko.md",
+    "README.md",
+    "README.pt-BR.md",
+    "SECURITY.md",
+    "Sources/MDPreview/main.swift",
+    "Sources/MDPreviewCore/AppDelegate.swift",
+    "Sources/MDPreviewCore/CLIInstaller.swift",
+    "Sources/MDPreviewCore/ContentView.swift",
+    "Sources/MDPreviewCore/FileTree.swift",
+    "Sources/MDPreviewCore/MDPreviewApp.swift",
+    "Sources/MDPreviewCore/MainView.swift",
+    "Sources/MDPreviewCore/MarkdownDocument.swift",
+    "Sources/MDPreviewCore/Workspace.swift",
+    "Supporting/mdpreview",
+    "Tests/MDPreviewCoreTests/AppDelegateTests.swift",
+    "Tests/MDPreviewCoreTests/FileTreeTests.swift",
+    "Tests/MDPreviewCoreTests/IntegrationTests.swift",
+    "Tests/MDPreviewCoreTests/MarkdownDocumentTests.swift"
+  ],
+  "sessions": [
+    {
+      "metadata": "/4f/6f47aaea3a/0/metadata.json",
+      "transcript": "/4f/6f47aaea3a/0/full.jsonl",
+      "context": "/4f/6f47aaea3a/0/context.md",
+      "content_hash": "/4f/6f47aaea3a/0/content_hash.txt",
+      "prompt": "/4f/6f47aaea3a/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 60337,
+    "cache_creation_tokens": 138307,
+    "cache_read_tokens": 7494038,
+    "output_tokens": 79660,
+    "api_call_count": 118
+  }
+}
