@@ -1,0 +1,148 @@
+Implement the following plan:
+
+# MDPreview v1.2.3 Fix Plan
+
+## Context
+
+User reported issues with v1.2.2:
+1. `mdpreview --version` not working
+2. `mdpreview --help` blocking the terminal
+3. `mdpreview README.md` should exit immediately after opening app (non-blocking)
+4. Images not loading from relative paths in markdown
+
+## Problem Analysis
+
+### Issue 1 & 2: CLI Options
+
+The CLI script at `Supporting/mdpreview` appears correct:
+- `show_help()` and `show_version()` both call `exit 0`
+- The option parsing looks standard
+
+**Root cause**: The installed version may be outdated, OR the `open -a` command at the end doesn't have explicit exit, causing the shell to wait.
+
+### Issue 3: Non-blocking File Opening
+
+When running `mdpreview README.md`, the script uses:
+```sh
+open -a "$APP" "$@"
+```
+
+This should return immediately, but adding explicit `exit 0` ensures proper exit behavior.
+
+### Issue 4: Image Loading
+
+**Root cause**: The WKWebView loads `template.html` from the app bundle. When marked.js renders `![](./image.png)`, it becomes `<img src="./image.png">` which resolves relative to `template.html`'s location, not the markdown file's directory.
+
+Current code in `MarkdownWebView.swift`:
+- Uses `loadFileURL(resourceURL, allowingReadAccessTo: readAccessURL)` ✓
+- Sets `readAccessURL` to the markdown file's directory ✓
+- **Missing**: Setting the HTML `<base>` tag to resolve relative paths correctly
+
+## Implementation Plan
+
+### Step 1: Fix CLI Non-Blocking Behavior
+
+**File**: `Supporting/mdpreview`
+
+Add explicit `exit 0` after `open -a` commands:
+
+```sh
+if [ $# -eq 0 ]; then
+    open -a "$APP"
+    exit 0
+else
+    open -a "$APP" "$@"
+    exit 0
+fi
+```
+
+### Step 2: Fix Image Loading
+
+**File**: `Sources/MDPreviewCore/MarkdownWebView.swift`
+
+Modify to inject a `<base>` element into the HTML. Two approaches:
+
+**Option A**: Pass baseURL to JavaScript and inject `<base>` tag
+```swift
+private func evaluateRender(webView: WKWebView, content: String) {
+    let escaped = MarkdownWebView.escapeForJavaScript(content)
+    let baseHref = baseURL?.path ?? ""
+    webView.evaluateJavaScript("render(`\(escaped)`, `\(baseHref)`)")
+}
+```
+
+**Option B**: Use `loadHTMLString` with custom base URL (simpler, but may have sandbox restrictions)
+
+**Recommended**: Option A - Modify template.html JavaScript to accept base path and inject `<base>` tag.
+
+**File**: `Sources/MDPreviewCore/Resources/template.html`
+
+Update the `render` function:
+```javascript
+function render(markdown, basePath) {
+    // Set base URL for relative path resolution
+    if (basePath) {
+        var base = document.querySelector('base');
+        if (!base) {
+            base = document.createElement('base');
+            document.head.appendChild(base);
+        }
+        base.href = 'file://' + basePath + '/';
+    }
+    // ... rest of render logic
+}
+```
+
+### Step 3: Update Version Numbers
+
+**Files**:
+- `Supporting/Info.plist`: 1.2.2 → 1.2.3
+- `Supporting/mdpreview`: VERSION="1.2.3"
+
+### Step 4: Verification
+
+1. Build and run locally:
+   ```sh
+   swift build -c release --arch arm64
+   swift build -c release --arch x86_64
+   make package  # or manual app bundle creation
+   ```
+
+2. Test CLI:
+   ```sh
+   ./build/MDPreview.app/Contents/Resources/mdpreview --version
+   ./build/MDPreview.app/Contents/Resources/mdpreview --help
+   ./build/MDPreview.app/Contents/Resources/mdpreview README.md
+   ```
+
+3. Test image loading:
+   - Create a test markdown with relative image: `![](./image.png)`
+   - Open with app, verify image displays
+
+## Files to Modify
+
+1. `Supporting/mdpreview` - Add explicit exit, update version
+2. `Supporting/Info.plist` - Update version
+3. `Sources/MDPreviewCore/MarkdownWebView.swift` - Pass baseURL to render function
+4. `Sources/MDPreviewCore/Resources/template.html` - Add base URL handling in render()
+
+
+If you need specific details from before exiting plan mode (like exact code snippets, error messages, or content you generated), read the full transcript at: /Users/kazu42/.claude/projects/-Users-kazu42-dev-mdpreview/e194ae2d-36fd-430a-9d1d-ebf591ebe0fb.jsonl
+
+If this plan can be broken down into multiple independent tasks, consider using the TeamCreate tool to create a team and parallelize the work.
+
+---
+
+もうリリースした？
+
+---
+
+タブの問題は修正した？
+
+---
+
+現状のtabの実装教えてほしい。あと、markdown内のリンクにとべない問題あった。
+
+---
+
+終わったら、リリースして。

@@ -1,0 +1,33 @@
+{
+  "cli_version": "0.4.7",
+  "checkpoint_id": "8b86fa33eec8",
+  "session_id": "3ad7a41f-4c08-4eae-89fc-3876a292946d",
+  "strategy": "manual-commit",
+  "created_at": "2026-02-26T15:45:32.553238Z",
+  "branch": "main",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "Sources/MDPreviewCore/MarkdownWebView.swift",
+    "Sources/MDPreviewCore/Resources/template.html",
+    "Supporting/Info.plist",
+    "Supporting/mdpreview"
+  ],
+  "agent": "Claude Code",
+  "turn_id": "a11347fac136",
+  "token_usage": {
+    "input_tokens": 50820,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 698752,
+    "output_tokens": 5638,
+    "api_call_count": 22
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-02-26T15:45:32.440449Z",
+    "agent_lines": 20,
+    "human_added": 15,
+    "human_modified": 2,
+    "human_removed": 0,
+    "total_committed": 37,
+    "agent_percentage": 54.054054054054056
+  }
+}
