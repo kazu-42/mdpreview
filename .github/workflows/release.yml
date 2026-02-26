@@ -4,6 +4,11 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version (e.g., 1.2.1)"
+        required: false
 
 permissions:
   contents: write
@@ -20,50 +25,110 @@ jobs:
       - name: Show Swift version
         run: swift --version
 
-      - name: Extract version from tag
+      - name: Extract version
         id: version
-        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ -n "${{ inputs.version }}" ]; then
+            VERSION="${{ inputs.version }}"
+          else
+            VERSION="${GITHUB_REF_NAME#v}"
+          fi
+          echo "VERSION=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Building version: $VERSION"
 
-      - name: Build release binary
-        run: swift build -c release
+      - name: Update Info.plist version
+        run: |
+          VERSION="${{ steps.version.outputs.VERSION }}"
+          sed -i '' "s/<string>1.0.0</<string>$VERSION</g" Supporting/Info.plist
+          sed -i '' "s/<string>1.0</<string>$VERSION</g" Supporting/Info.plist
+          sed -i '' "s/VERSION=.*/VERSION=\"$VERSION\"/" Supporting/mdpreview || true
+
+      - name: Update CLI version
+        run: |
+          VERSION="${{ steps.version.outputs.VERSION }}"
+          sed -i '' "s/VERSION=\".*\"/VERSION=\"$VERSION\"/" Supporting/mdpreview
+
+      - name: Build release (arm64)
+        run: swift build -c release --arch arm64
+
+      - name: Build release (x86_64)
+        run: swift build -c release --arch x86_64
 
       - name: Create app bundle
-        run: make bundle
+        run: |
+          VERSION="${{ steps.version.outputs.VERSION }}"
+          BUILD_DIR_ARM=$(swift build -c release --arch arm64 --show-bin-path)
+          BUILD_DIR_X86=$(swift build -c release --arch x86_64 --show-bin-path)
+
+          mkdir -p build/MDPreview.app/Contents/MacOS
+          mkdir -p build/MDPreview.app/Contents/Resources
+
+          # Create universal binary
+          lipo -create \
+            "$BUILD_DIR_ARM/MDPreview" \
+            "$BUILD_DIR_X86/MDPreview" \
+            -output build/MDPreview.app/Contents/MacOS/MDPreview
+
+          cp Supporting/Info.plist build/MDPreview.app/Contents/
+          cp Supporting/mdpreview build/MDPreview.app/Contents/Resources/mdpreview
+          chmod +x build/MDPreview.app/Contents/Resources/mdpreview
+
+          if [ -f "Assets/AppIcon.icns" ]; then
+            cp Assets/AppIcon.icns build/MDPreview.app/Contents/Resources/AppIcon.icns
+          fi
+
+          # Copy resource bundles
+          for bundle in "$BUILD_DIR_ARM"/*.bundle; do
+            [ -d "$bundle" ] && cp -R "$bundle" build/MDPreview.app/Contents/Resources/
+          done
+
+          # Verify architecture
+          echo "Binary architecture:"
+          lipo -info build/MDPreview.app/Contents/MacOS/MDPreview
 
       - name: Ad-hoc code sign
-        run: codesign --force --deep --sign - build/MDPreview.app
+        run: |
+          codesign --force --deep --sign - build/MDPreview.app
+          codesign --verify --verbose build/MDPreview.app
 
-      - name: Verify code signature
-        run: codesign --verify --verbose build/MDPreview.app
+      - name: Verify dependencies
+        run: |
+          echo "=== Dynamic Libraries ==="
+          otool -L build/MDPreview.app/Contents/MacOS/MDPreview
+          echo ""
+          echo "=== Bundle Size ==="
+          du -sh build/MDPreview.app
 
       - name: Create DMG
         run: |
-          DMG_NAME="MDPreview-${{ steps.version.outputs.VERSION }}.dmg"
+          VERSION="${{ steps.version.outputs.VERSION }}"
+          DMG_NAME="MDPreview-$VERSION.dmg"
           mkdir -p dmg-staging
           cp -R build/MDPreview.app dmg-staging/
           ln -s /Applications dmg-staging/Applications
           hdiutil create -volname "MDPreview" \
             -srcfolder dmg-staging \
             -ov -format UDZO \
-            "build/${DMG_NAME}"
+            "build/$DMG_NAME"
           rm -rf dmg-staging
-          echo "DMG_NAME=${DMG_NAME}" >> "$GITHUB_ENV"
+          echo "DMG_NAME=$DMG_NAME" >> "$GITHUB_ENV"
 
       - name: Create ZIP
         run: |
-          ZIP_NAME="MDPreview-${{ steps.version.outputs.VERSION }}.zip"
+          VERSION="${{ steps.version.outputs.VERSION }}"
+          ZIP_NAME="MDPreview-$VERSION.zip"
           cd build
-          ditto -c -k --sequesterRsrc --keepParent MDPreview.app "${ZIP_NAME}"
+          ditto -c -k --sequesterRsrc --keepParent MDPreview.app "$ZIP_NAME"
           cd ..
-          echo "ZIP_NAME=${ZIP_NAME}" >> "$GITHUB_ENV"
+          echo "ZIP_NAME=$ZIP_NAME" >> "$GITHUB_ENV"
 
       - name: Calculate checksums
         run: |
+          VERSION="${{ steps.version.outputs.VERSION }}"
           cd build
-          shasum -a 256 "${DMG_NAME}" "${ZIP_NAME}" > "MDPreview-${{ steps.version.outputs.VERSION }}-checksums.txt"
-          cat "MDPreview-${{ steps.version.outputs.VERSION }}-checksums.txt"
-          cd ..
-          echo "CHECKSUM_NAME=MDPreview-${{ steps.version.outputs.VERSION }}-checksums.txt" >> "$GITHUB_ENV"
+          shasum -a 256 "${DMG_NAME}" "${ZIP_NAME}" > "MDPreview-$VERSION-checksums.txt"
+          cat "MDPreview-$VERSION-checksums.txt"
+          echo "CHECKSUM_NAME=MDPreview-$VERSION-checksums.txt" >> "$GITHUB_ENV"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -75,3 +140,13 @@ jobs:
             build/${{ env.DMG_NAME }}
             build/${{ env.ZIP_NAME }}
             build/${{ env.CHECKSUM_NAME }}
+            build/MDPreview.app/Contents/Resources/mdpreview
+
+      - name: Commit version updates
+        if: github.event_name == 'push'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Supporting/Info.plist Supporting/mdpreview || true
+          git diff --cached --quiet || git commit -m "chore: Update version to ${{ steps.version.outputs.VERSION }}"
+          git push origin HEAD:main || true
