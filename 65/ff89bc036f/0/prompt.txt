@@ -826,3 +826,193 @@ cliコマンドのほう修正した？
 ---
 
 リリースしてある？
+
+---
+
+This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation.
+
+Analysis:
+Let me analyze the conversation chronologically:
+
+1. **Initial Request**: User asked to implement a fix plan for MDPreview v1.2.3 with issues:
+   - CLI `--version` not working
+   - CLI `--help` blocking terminal
+   - File opening should be non-blocking
+   - Images not loading from relative paths
+
+2. **First Release (v1.2.3)**: 
+   - Added `exit 0` to CLI after `open -a` commands
+   - Updated render() to accept basePath parameter
+   - CI failed due to test expecting old render signature
+
+3. **Second Release (v1.2.4)**:
+   - Fixed test for render function signature
+   - App crashed due to Bundle.module not working in packaged apps
+   - Created safeModuleURL() function
+   - Added multiple fallback paths for template.html loading
+
+4. **Third Release (v1.2.5)**:
+   - Fixed relative image path resolution
+   - Created rewriteRelativePaths() to convert relative paths to absolute file URLs
+   - Still had issues with markdown not rendering
+
+5. **Current Work (v1.2.6)**:
+   - Added TOC click-to-jump functionality
+   - Improved tab selection UI with accent color and border
+   - Fixed markdown rendering by removing broken custom renderer
+   - Added post-render heading ID injection
+
+Key files modified:
+- `Sources/MDPreviewCore/MarkdownWebView.swift`
+- `Sources/MDPreviewCore/Resources/template.html`
+- `Sources/MDPreviewCore/MainView.swift`
+- `Supporting/Info.plist`
+- `Supporting/mdpreview`
+
+User also requested cleanup of old build files (build-old directory, .build directory).
+
+The most recent action was releasing v1.2.6 and checking CI status.
+
+Summary:
+1. Primary Request and Intent:
+   - Fix MDPreview CLI issues: `--version`, `--help`, and non-blocking file opening
+   - Fix image loading from relative paths in markdown
+   - Fix markdown links to open in new tabs
+   - Add TOC (Table of Contents) click-to-jump functionality
+   - Improve tab selection UI visibility
+   - Clean up old build files and resources
+
+2. Key Technical Concepts:
+   - Swift Package Manager (SPM) resource bundle loading
+   - `Bundle.module` vs `Bundle.main` for resource access in packaged apps
+   - WKWebView JavaScript bridge for markdown rendering
+   - marked.js for markdown parsing
+   - Relative path resolution with `<base>` tag and absolute file URLs
+   - NotificationCenter for cross-component communication (TOC to WebView)
+   - Homebrew cask distribution and tap updates
+
+3. Files and Code Sections:
+
+   - **`Sources/MDPreviewCore/MarkdownWebView.swift`**
+     - Core file for WebView rendering and resource loading
+     - Added `safeModuleURL()` to avoid Bundle.module crash
+     - Added `rewriteRelativePaths()` to convert relative paths to absolute file URLs
+     - Added scroll observer for TOC navigation
+     ```swift
+     private static func rewriteRelativePaths(in markdown: String, baseURL: URL) -> String {
+         let baseDirectory = baseURL.path
+         let relativePattern = #"(!?\[[^\]]*\]\()(\.\/[^)]+|[^)#:\s][^)]*[^\)#:\s])(\))"#
+         // ... converts ./image.png to file:///path/to/image.png
+     }
+     
+     private func scrollToAnchor(_ anchor: String) {
+         guard let webView = webView else { return }
+         let escapedAnchor = anchor.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? anchor
+         webView.evaluateJavaScript("scrollToAnchor('\(escapedAnchor)')")
+     }
+     ```
+
+   - **`Sources/MDPreviewCore/Resources/template.html`**
+     - Contains JavaScript for markdown rendering
+     - Added heading ID injection after rendering (post-render approach)
+     - Added scrollToAnchor function
+     ```javascript
+     function render(markdown, basePath) {
+         // ... render markdown ...
+         
+         // Add IDs to headings for anchor links
+         document.querySelectorAll('h1, h2, h3, h4, h5, h6').forEach(function(heading) {
+             var slug = heading.textContent.toLowerCase()
+                 .replace(/[^a-z0-9\s-]/g, '')
+                 .replace(/\s+/g, '-');
+             heading.id = slug;
+         });
+     }
+     
+     function scrollToAnchor(anchor) {
+         var element = document.getElementById(anchor);
+         if (element) {
+             element.scrollIntoView({ behavior: 'smooth', block: 'start' });
+         }
+     }
+     ```
+
+   - **`Sources/MDPreviewCore/MainView.swift`**
+     - Tab bar UI improvements
+     - Enhanced TabBarItem with accent color and border for selected state
+     ```swift
+     .background(
+         RoundedRectangle(cornerRadius: 6)
+             .fill(isSelected ? Color.accentColor.opacity(0.15) : (isHovering ? Color(nsColor: .controlBackgroundColor) : Color.clear))
+     )
+     .overlay(
+         RoundedRectangle(cornerRadius: 6)
+             .stroke(isSelected ? Color.accentColor.opacity(0.5) : Color.clear, lineWidth: 1)
+     )
+     ```
+
+   - **`Supporting/mdpreview`**
+     - CLI shell script with `exit 0` added after `open -a` commands for non-blocking behavior
+
+4. Errors and fixes:
+   - **CI test failure for render function signature**: Updated test to expect `render(markdown, basePath)` instead of `render(markdown)`
+   - **App crash with Bundle.module**: Created `safeModuleURL()` and multiple fallback paths for resource loading
+   - **Custom renderer breaking markdown**: Removed custom marked.js renderer that only handled headings, switched to post-render DOM manipulation for heading IDs
+   - **Images not loading**: Created `rewriteRelativePaths()` to convert relative paths to absolute `file://` URLs
+   - **build-old directory permission denied**: Files owned by root, user had to manually `sudo rm -rf`
+
+5. Problem Solving:
+   - Solved CLI blocking by adding explicit `exit 0` after `open -a` commands
+   - Solved resource bundle loading by checking multiple paths and avoiding Bundle.module crash
+   - Solved relative image paths by converting to absolute file URLs in Swift before passing to JavaScript
+   - Solved TOC navigation by adding heading IDs after rendering and using NotificationCenter
+   - Cleaned up .build directory (809MB → 4KB) with `swift package clean`
+
+6. All user messages:
+   - "Implement the following plan: # MDPreview v1.2.3 Fix Plan..."
+   - "ci落ちた？"
+   - "brew upgrade mdpreviewして試す"
+   - "markdownが表示されないままリリースされちゃってる。至急修正して。ちゃんと動いてるか確認してからリリースして"
+   - "もう一回開いて"
+   - "コマンドwで、アプリ全体が閉じちゃってるかも？タブだけ閉じるようになってる？"
+   - "現在のままでいい。リリースして"
+   - "readmeのhttps://github.com/user-attachments/assets/placeholder-lightが404になってる。actionsでスクリーンショットが難しいのかな？"
+   - "mdpreview --versionとかいまだに対応してないの？"
+   - "アプリから、インストールボタン押さないと、cliの更新されないの？なんか自動でアプリ更新時にcliもアップグレードされて欲しい"
+   - "古いやつとかアプリが残ってる。必要ないリソースは削除してほしい"
+   - "build oldtteiru?"
+   - "/Users/kazu42/dev/mdpreview/build-old"
+   - "ローカルでビルドしたやつだと使えるんだけど、homebrew経由だとmarkdownが描画されない"
+   - "tocクリックしたら、そこのタイトルのところにジャンプするようにして"
+   - "どのタブが開かれてるのかわかるようにして"
+   - "ローカルビルドでも、markdownの描画されなくなった"
+   - "cliコマンドのほう修正した？"
+   - "リリースしてある？"
+
+7. Pending Tasks:
+   - Wait for v1.2.6 Release workflow to complete
+   - Update Homebrew tap with new version and checksum
+   - Verify markdown renders correctly in Homebrew version (user reported issue)
+
+8. Current Work:
+   Just pushed v1.2.6 with:
+   - TOC click-to-jump functionality
+   - Improved tab selection UI
+   - Fixed markdown rendering (removed broken custom renderer)
+   
+   CI and Release workflows are running:
+   ```
+   queued     feat: v1.2.6 - Add TOC navigation and improve tab UI  Release  v1.2.6
+   in_progress feat: v1.2.6 - Add TOC navigation and improve tab UI  CI       main
+   ```
+
+9. Optional Next Step:
+   Wait for release workflow to complete, then:
+   1. Download new DMG and get sha256 checksum
+   2. Update Homebrew tap with v1.2.6
+   3. Upgrade via brew and verify markdown renders correctly
+   
+   User's last question was "リリースしてある？" (Is it released?) - I had just pushed v1.2.6 and was checking CI status. Need to wait for release to complete and update Homebrew tap.
+
+If you need specific details from before compaction (like exact code snippets, error messages, or content you generated), read the full transcript at: /Users/kazu42/.claude/projects/-Users-kazu42-dev-mdpreview/3ad7a41f-4c08-4eae-89fc-3876a292946d.jsonl
+Please continue the conversation from where we left off without asking the user any further questions. Continue with the last task that you were asked to work on.

@@ -133,3 +133,19 @@ cliコマンドのほう修正した？
 
 リリースしてある？
 
+### Prompt 26
+
+This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation.
+
+Analysis:
+Let me analyze the conversation chronologically:
+
+1. **Initial Request**: User asked to implement a fix plan for MDPreview v1.2.3 with issues:
+   - CLI `--version` not working
+   - CLI `--help` blocking terminal
+   - File opening should be non-blocking
+   - Images not loading from relative paths
+
+2. **First Release (v1.2.3)**: 
+   -...
+
