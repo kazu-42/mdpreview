@@ -19,8 +19,10 @@ public struct FileTreeNode: Identifiable, Hashable {
 
     static let markdownExtensions: Set<String> = ["md", "markdown", "mdown", "mkd"]
 
+    // Note: Hidden files/directories (starting with .) are now shown
+    // Only skip common large/generated directories
     private static let skippedDirectories: Set<String> = [
-        "node_modules", ".git", ".svn", ".hg", "build", ".build",
+        "node_modules", "build", ".build",
         "DerivedData", "Pods", ".next", "dist", "target", "__pycache__",
         ".venv", "venv", ".tox", ".cache",
     ]
@@ -30,7 +32,7 @@ public struct FileTreeNode: Identifiable, Hashable {
         guard let contents = try? fm.contentsOfDirectory(
             at: url,
             includingPropertiesForKeys: [.isDirectoryKey],
-            options: [.skipsHiddenFiles]
+            options: []  // Show hidden files too
         ) else { return [] }
 
         var nodes: [FileTreeNode] = []

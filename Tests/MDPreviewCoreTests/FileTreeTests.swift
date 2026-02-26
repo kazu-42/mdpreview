@@ -51,13 +51,14 @@ final class FileTreeTests: XCTestCase {
         XCTAssertEqual(docsNode?.children?.count, 1)
     }
 
-    func testBuildTreeSkipsHiddenFiles() {
+    func testBuildTreeIncludesHiddenFiles() {
+        // Hidden files are now shown (user requested this change)
         try! "hidden".write(to: tempDir.appendingPathComponent(".hidden.md"), atomically: true, encoding: .utf8)
         try! "visible".write(to: tempDir.appendingPathComponent("visible.md"), atomically: true, encoding: .utf8)
 
         let tree = FileTreeNode.buildTree(from: tempDir)
 
-        XCTAssertFalse(tree.contains(where: { $0.name == ".hidden.md" }))
+        XCTAssertTrue(tree.contains(where: { $0.name == ".hidden.md" }))
         XCTAssertTrue(tree.contains(where: { $0.name == "visible.md" }))
     }
 
@@ -71,15 +72,16 @@ final class FileTreeTests: XCTestCase {
         XCTAssertFalse(tree.contains(where: { $0.name == "node_modules" }))
     }
 
-    func testBuildTreeSkipsGitDirectory() {
+    func testBuildTreeIncludesGitDirectory() {
+        // Hidden directories like .git are now shown (user requested this change)
         let git = tempDir.appendingPathComponent(".git")
         try! FileManager.default.createDirectory(at: git, withIntermediateDirectories: true)
         try! "x".write(to: git.appendingPathComponent("config.md"), atomically: true, encoding: .utf8)
 
         let tree = FileTreeNode.buildTree(from: tempDir)
 
-        // .git is hidden, so skipped by skipsHiddenFiles
-        XCTAssertFalse(tree.contains(where: { $0.name == ".git" }))
+        // .git is now visible since we show hidden files
+        XCTAssertTrue(tree.contains(where: { $0.name == ".git" }))
     }
 
     func testBuildTreeSkipsEmptyDirectories() {

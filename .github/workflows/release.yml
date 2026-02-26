@@ -70,6 +70,7 @@ jobs:
             -output build/MDPreview.app/Contents/MacOS/MDPreview
 
           cp Supporting/Info.plist build/MDPreview.app/Contents/
+          cp Supporting/MDPreview.entitlements build/MDPreview.app/Contents/
           cp Supporting/mdpreview build/MDPreview.app/Contents/Resources/mdpreview
           chmod +x build/MDPreview.app/Contents/Resources/mdpreview
 
@@ -86,9 +87,48 @@ jobs:
           echo "Binary architecture:"
           lipo -info build/MDPreview.app/Contents/MacOS/MDPreview
 
-      - name: Ad-hoc code sign
+      - name: Install Apple certificate
+        if: env.DEVELOPER_ID_CERT_BASE64 != ''
+        env:
+          DEVELOPER_ID_CERT_BASE64: ${{ secrets.DEVELOPER_ID_CERT_BASE64 }}
+          DEVELOPER_ID_CERT_PASSWORD: ${{ secrets.DEVELOPER_ID_CERT_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
         run: |
-          codesign --force --deep --sign - build/MDPreview.app
+          # Create temporary keychain
+          KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
+          security create-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+          security set-keychain-settings -lut 21600 $KEYCHAIN_PATH
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+
+          # Import certificate
+          CERT_PATH=$RUNNER_TEMP/certificate.p12
+          echo -n "$DEVELOPER_ID_CERT_BASE64" | base64 --decode -o $CERT_PATH
+          security import $CERT_PATH -P "$DEVELOPER_ID_CERT_PASSWORD" -A -t cert -f pkcs12 -k $KEYCHAIN_PATH
+          security list-keychain -d user -s $KEYCHAIN_PATH
+
+      - name: Code sign (with Developer ID)
+        if: env.DEVELOPER_ID_CERT_BASE64 != ''
+        env:
+          DEVELOPER_ID_CERT_BASE64: ${{ secrets.DEVELOPER_ID_CERT_BASE64 }}
+          SIGNING_IDENTITY: ${{ secrets.SIGNING_IDENTITY }}
+        run: |
+          # Sign with entitlements
+          codesign --force --deep --sign "$SIGNING_IDENTITY" \
+            --entitlements Supporting/MDPreview.entitlements \
+            --options runtime \
+            --timestamp \
+            build/MDPreview.app
+
+          codesign --verify --verbose build/MDPreview.app
+
+      - name: Code sign (ad-hoc fallback)
+        if: env.DEVELOPER_ID_CERT_BASE64 == ''
+        run: |
+          # Ad-hoc sign for local testing (not notarized)
+          codesign --force --deep --sign - \
+            --entitlements Supporting/MDPreview.entitlements \
+            build/MDPreview.app
+
           codesign --verify --verbose build/MDPreview.app
 
       - name: Verify dependencies
@@ -112,6 +152,25 @@ jobs:
             "build/$DMG_NAME"
           rm -rf dmg-staging
           echo "DMG_NAME=$DMG_NAME" >> "$GITHUB_ENV"
+
+      - name: Notarize DMG
+        if: env.APPLE_ID != ''
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: |
+          # Submit for notarization
+          xcrun notarytool submit "build/${{ env.DMG_NAME }}" \
+            --apple-id "$APPLE_ID" \
+            --team-id "$APPLE_TEAM_ID" \
+            --password "$APPLE_APP_PASSWORD" \
+            --wait
+
+          # Staple the notarization
+          xcrun stapler staple "build/${{ env.DMG_NAME }}"
+
+          echo "Notarization complete!"
 
       - name: Create ZIP
         run: |
@@ -141,6 +200,14 @@ jobs:
             build/${{ env.ZIP_NAME }}
             build/${{ env.CHECKSUM_NAME }}
             build/MDPreview.app/Contents/Resources/mdpreview
+
+      - name: Cleanup keychain
+        if: always()
+        run: |
+          KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
+          if [ -f "$KEYCHAIN_PATH" ]; then
+            security delete-keychain $KEYCHAIN_PATH || true
+          fi
 
       - name: Commit version updates
         if: github.event_name == 'push'

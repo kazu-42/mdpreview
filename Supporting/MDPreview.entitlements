@@ -2,7 +2,15 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <!-- Hardened Runtime required for notarization -->
+    <!-- App Sandbox (required for Mac App Store, optional for Developer ID) -->
+    <key>com.apple.security.app-sandbox</key>
+    <true/>
+
+    <!-- File access: read-only for user-selected files -->
+    <key>com.apple.security.files.user-selected.read-only</key>
+    <true/>
+
+    <!-- Hardened Runtime (required for notarization) -->
     <key>com.apple.security.cs.allow-jit</key>
     <false/>
     <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
@@ -11,11 +19,5 @@
     <false/>
     <key>com.apple.security.cs.disable-library-validation</key>
     <false/>
-    <!-- Network access for potential future features -->
-    <key>com.apple.security.network.client</key>
-    <false/>
-    <!-- File access -->
-    <key>com.apple.security.files.user-selected.read-only</key>
-    <true/>
 </dict>
 </plist>
