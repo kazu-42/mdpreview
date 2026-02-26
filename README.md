@@ -90,6 +90,7 @@ mdpreview
 | `Cmd+Shift+]` | Next tab |
 | `Cmd+Shift+[` | Previous tab |
 | `Ctrl+Tab` | Next tab |
+| `Cmd+1` - `Cmd+9` | Go to tab 1-9 |
 | `Cmd+Q` | Quit |
 
 ## Screenshots

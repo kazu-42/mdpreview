@@ -90,6 +90,7 @@ mdpreview
 | `Cmd+Shift+]` | 次のタブ |
 | `Cmd+Shift+[` | 前のタブ |
 | `Ctrl+Tab` | 次のタブ |
+| `Cmd+1` - `Cmd+9` | タブ 1-9 に移動 |
 | `Cmd+Q` | 終了 |
 
 ## スクリーンショット
