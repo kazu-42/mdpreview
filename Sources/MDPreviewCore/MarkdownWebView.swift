@@ -3,9 +3,11 @@ import WebKit
 
 public struct MarkdownWebView: NSViewRepresentable {
     public let markdownContent: String
+    public let baseURL: URL?
 
-    public init(markdownContent: String) {
+    public init(markdownContent: String, baseURL: URL? = nil) {
         self.markdownContent = markdownContent
+        self.baseURL = baseURL
     }
 
     public func makeCoordinator() -> Coordinator {
@@ -24,12 +26,19 @@ public struct MarkdownWebView: NSViewRepresentable {
 
         context.coordinator.webView = webView
         context.coordinator.pendingContent = markdownContent
-        loadTemplate(into: webView)
+        context.coordinator.baseURL = baseURL
+        loadTemplate(into: webView, baseURL: baseURL)
 
         return webView
     }
 
     public func updateNSView(_ webView: WKWebView, context: Context) {
+        // Update base URL if changed
+        if context.coordinator.baseURL != baseURL {
+            context.coordinator.baseURL = baseURL
+            loadTemplate(into: webView, baseURL: baseURL)
+        }
+
         if context.coordinator.isLoaded {
             evaluateRender(webView: webView, content: markdownContent)
         } else {
@@ -37,7 +46,7 @@ public struct MarkdownWebView: NSViewRepresentable {
         }
     }
 
-    private func loadTemplate(into webView: WKWebView) {
+    private func loadTemplate(into webView: WKWebView, baseURL: URL?) {
         guard let resourceURL = Bundle.module.url(
             forResource: "template",
             withExtension: "html",
@@ -45,10 +54,16 @@ public struct MarkdownWebView: NSViewRepresentable {
         ) else {
             return
         }
-        webView.loadFileURL(
-            resourceURL,
-            allowingReadAccessTo: resourceURL.deletingLastPathComponent()
-        )
+
+        // Use the markdown file's directory as base URL for resolving relative paths
+        let readAccessURL: URL
+        if let base = baseURL {
+            readAccessURL = base
+        } else {
+            readAccessURL = resourceURL.deletingLastPathComponent()
+        }
+
+        webView.loadFileURL(resourceURL, allowingReadAccessTo: readAccessURL)
     }
 
     private func evaluateRender(webView: WKWebView, content: String) {
@@ -71,6 +86,7 @@ public struct MarkdownWebView: NSViewRepresentable {
         public var webView: WKWebView?
         public var isLoaded = false
         public var pendingContent: String?
+        public var baseURL: URL?
 
         public func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
             isLoaded = true
@@ -89,6 +105,11 @@ public struct MarkdownWebView: NSViewRepresentable {
             // Open external links in the default browser
             if navigationAction.navigationType == .linkActivated,
                let url = navigationAction.request.url {
+                // Allow local file URLs (images, etc.)
+                if url.isFileURL {
+                    decisionHandler(.allow)
+                    return
+                }
                 NSWorkspace.shared.open(url)
                 decisionHandler(.cancel)
                 return

@@ -7,6 +7,7 @@ public struct TabItem: Identifiable, Equatable {
     public let url: URL
 
     public var name: String { url.lastPathComponent }
+    public var directoryURL: URL { url.deletingLastPathComponent() }
 
     public static func == (lhs: TabItem, rhs: TabItem) -> Bool {
         lhs.id == rhs.id
@@ -23,10 +24,20 @@ public final class Workspace: ObservableObject {
     @Published public var markdownContent: String = ""
     @Published public var errorMessage: String?
 
+    // Persisted state
+    @AppStorage("sidebarWidth") public var sidebarWidth: Double = 200
+    @AppStorage("lastOpenedFiles") private var lastOpenedFilesData: Data = Data()
+    @AppStorage("lastDirectory") private var lastDirectoryPath: String = ""
+
     /// Computed property for showing error alerts
     public var showError: Bool {
         get { errorMessage != nil }
         set { if !newValue { errorMessage = nil } }
+    }
+
+    /// Current file's directory for resolving relative image paths
+    public var currentFileDirectory: URL? {
+        selectedTab?.directoryURL ?? directoryURL
     }
 
     private let fileWatcher = FileWatcher()
@@ -71,11 +82,13 @@ public final class Workspace: ObservableObject {
         let tab = TabItem(url: standardized)
         tabs.append(tab)
         selectTab(tab.id)
+        saveState()
     }
 
     public func openDirectory(_ url: URL) {
         directoryURL = url.standardizedFileURL
         fileTreeNodes = FileTreeNode.buildTree(from: url)
+        lastDirectoryPath = url.path
     }
 
     public func openURL(_ url: URL) {
@@ -130,6 +143,7 @@ public final class Workspace: ObservableObject {
                 selectTab(tabs[newIndex].id)
             }
         }
+        saveState()
     }
 
     public func closeCurrentTab() {
@@ -149,6 +163,7 @@ public final class Workspace: ObservableObject {
         selectedTabID = nil
         markdownContent = ""
         fileWatcher.stop()
+        saveState()
     }
 
     public func selectNextTab() {
@@ -168,8 +183,37 @@ public final class Workspace: ObservableObject {
     }
 
     public func toggleSidebar() {
-        // This is handled by NavigationSplitView visibility
         NotificationCenter.default.post(name: .toggleSidebar, object: nil)
+    }
+
+    // MARK: - State Persistence
+
+    public func saveState() {
+        // Save open file paths
+        let paths = tabs.map { $0.url.path }
+        if let data = try? JSONEncoder().encode(paths) {
+            lastOpenedFilesData = data
+        }
+    }
+
+    public func restoreState() {
+        // Restore last directory
+        if !lastDirectoryPath.isEmpty {
+            let url = URL(fileURLWithPath: lastDirectoryPath)
+            if FileManager.default.fileExists(atPath: url.path) {
+                openDirectory(url)
+            }
+        }
+
+        // Restore open files
+        if let paths = try? JSONDecoder().decode([String].self, from: lastOpenedFilesData) {
+            for path in paths {
+                let url = URL(fileURLWithPath: path)
+                if FileManager.default.fileExists(atPath: url.path) {
+                    openFile(url)
+                }
+            }
+        }
     }
 
     // MARK: - Open Panel
@@ -196,12 +240,38 @@ public final class Workspace: ObservableObject {
     // MARK: - Private
 
     private func loadContent(for tab: TabItem) {
+        // Check file size for async loading
+        let fileSize: Int64
         do {
-            let content = try String(contentsOf: tab.url, encoding: .utf8)
-            self.markdownContent = content
-            self.errorMessage = nil
+            let attributes = try FileManager.default.attributesOfItem(atPath: tab.url.path)
+            fileSize = (attributes[.size] as? Int64) ?? 0
         } catch {
-            self.errorMessage = "Failed to load \(tab.name): \(error.localizedDescription)"
+            fileSize = 0
+        }
+
+        // Load large files asynchronously
+        if fileSize > 1_000_000 { // > 1MB
+            DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+                do {
+                    let content = try String(contentsOf: tab.url, encoding: .utf8)
+                    DispatchQueue.main.async {
+                        self?.markdownContent = content
+                        self?.errorMessage = nil
+                    }
+                } catch {
+                    DispatchQueue.main.async {
+                        self?.errorMessage = "Failed to load \(tab.name): \(error.localizedDescription)"
+                    }
+                }
+            }
+        } else {
+            do {
+                let content = try String(contentsOf: tab.url, encoding: .utf8)
+                self.markdownContent = content
+                self.errorMessage = nil
+            } catch {
+                self.errorMessage = "Failed to load \(tab.name): \(error.localizedDescription)"
+            }
         }
 
         fileWatcher.watch(url: tab.url) { [weak self] in

@@ -13,7 +13,16 @@ public struct MainView: View {
     public var body: some View {
         NavigationSplitView(columnVisibility: $columnVisibility) {
             FileTreeView(nodes: workspace.fileTreeNodes, workspace: workspace)
-                .frame(minWidth: sidebarWidth)
+                .frame(minWidth: 180, idealWidth: workspace.sidebarWidth)
+                .onReceive(NotificationCenter.default.publisher(for: .toggleSidebar)) { _ in
+                    withAnimation {
+                        if columnVisibility == .all {
+                            columnVisibility = .detailOnly
+                        } else {
+                            columnVisibility = .all
+                        }
+                    }
+                }
         } detail: {
             contentArea
         }
@@ -36,23 +45,36 @@ public struct MainView: View {
         }
     }
 
-    // MARK: - Constants
-
-    private let sidebarWidth: CGFloat = 200
-
     // MARK: - Content Area
 
     @ViewBuilder
     private var contentArea: some View {
-        VStack(spacing: 0) {
-            if workspace.tabs.count > 1 {
-                TabBarView(workspace: workspace)
+        if workspace.tabs.isEmpty {
+            EmptyStateView()
+        } else if workspace.tabs.count == 1 {
+            // Single tab - no tab bar needed
+            MarkdownWebView(
+                markdownContent: workspace.markdownContent,
+                baseURL: workspace.currentFileDirectory
+            )
+        } else {
+            // Multiple tabs - use native TabView
+            TabView(selection: $workspace.selectedTabID) {
+                ForEach(workspace.tabs) { tab in
+                    MarkdownWebView(
+                        markdownContent: workspace.markdownContent,
+                        baseURL: workspace.currentFileDirectory
+                    )
+                    .tabItem {
+                        Label(tab.name, systemImage: "doc.text")
+                    }
+                    .tag(tab.id)
+                }
             }
-
-            if workspace.selectedTab != nil {
-                MarkdownWebView(markdownContent: workspace.markdownContent)
-            } else {
-                EmptyStateView()
+            .onChange(of: workspace.selectedTabID) { newID in
+                if let id = newID {
+                    workspace.selectTab(id)
+                }
             }
         }
     }
@@ -89,9 +111,9 @@ public struct EmptyStateView: View {
     public init() {}
 
     public var body: some View {
-        VStack(spacing: emptyStateSpacing) {
+        VStack(spacing: 16) {
             Image(systemName: "doc.text")
-                .font(.system(size: emptyStateIconSize, weight: .thin))
+                .font(.system(size: 48, weight: .thin))
                 .foregroundColor(.secondary)
             Text("Drop a Markdown file here")
                 .font(.title3)
@@ -102,80 +124,4 @@ public struct EmptyStateView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
-
-    private let emptyStateSpacing: CGFloat = 16
-    private let emptyStateIconSize: CGFloat = 48
-}
-
-// MARK: - Tab Bar
-
-struct TabBarView: View {
-    @ObservedObject var workspace: Workspace
-
-    var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 0) {
-                ForEach(workspace.tabs) { tab in
-                    TabBarItem(
-                        tab: tab,
-                        isSelected: tab.id == workspace.selectedTabID,
-                        onSelect: { workspace.selectTab(tab.id) },
-                        onClose: { workspace.closeTab(tab.id) }
-                    )
-                }
-            }
-            .padding(.horizontal, tabBarPadding)
-        }
-        .frame(height: tabBarHeight)
-        .background(Color(nsColor: .windowBackgroundColor))
-        .overlay(alignment: .bottom) {
-            Divider()
-        }
-    }
-
-    private let tabBarHeight: CGFloat = 30
-    private let tabBarPadding: CGFloat = 4
-}
-
-struct TabBarItem: View {
-    let tab: TabItem
-    let isSelected: Bool
-    let onSelect: () -> Void
-    let onClose: () -> Void
-    @State private var isHovering = false
-
-    var body: some View {
-        HStack(spacing: tabBarItemSpacing) {
-            Image(systemName: "doc.text")
-                .font(.system(size: tabIconSize))
-                .foregroundColor(.secondary)
-            Text(tab.name)
-                .font(.system(size: tabTextSize))
-                .lineLimit(1)
-            Button(action: onClose) {
-                Image(systemName: "xmark")
-                    .font(.system(size: tabCloseIconSize, weight: .bold))
-                    .foregroundColor(.secondary)
-            }
-            .buttonStyle(.plain)
-            .opacity(isSelected || isHovering ? 1 : 0)
-        }
-        .padding(.horizontal, tabBarItemPaddingH)
-        .padding(.vertical, tabBarItemPaddingV)
-        .background(
-            RoundedRectangle(cornerRadius: tabBarItemCornerRadius)
-                .fill(isSelected ? Color(nsColor: .controlBackgroundColor) : Color.clear)
-        )
-        .contentShape(Rectangle())
-        .onTapGesture(perform: onSelect)
-        .onHover { isHovering = $0 }
-    }
-
-    private let tabBarItemSpacing: CGFloat = 4
-    private let tabIconSize: CGFloat = 10
-    private let tabTextSize: CGFloat = 11
-    private let tabCloseIconSize: CGFloat = 8
-    private let tabBarItemPaddingH: CGFloat = 10
-    private let tabBarItemPaddingV: CGFloat = 5
-    private let tabBarItemCornerRadius: CGFloat = 6
 }

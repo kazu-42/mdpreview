@@ -86,6 +86,33 @@ public struct FileTreeView: View {
                                 guard FileTreeNode.markdownExtensions.contains(ext) else { return }
                                 workspace.openFile(node.url)
                             }
+                            .contextMenu {
+                                if !node.isDirectory {
+                                    Button {
+                                        let ext = node.url.pathExtension.lowercased()
+                                        if FileTreeNode.markdownExtensions.contains(ext) {
+                                            workspace.openFile(node.url)
+                                        }
+                                    } label: {
+                                        Label("Open", systemImage: "arrow.right.circle")
+                                    }
+
+                                    Divider()
+                                }
+
+                                Button {
+                                    NSWorkspace.shared.activateFileViewerSelecting([node.url])
+                                } label: {
+                                    Label("Reveal in Finder", systemImage: "folder")
+                                }
+
+                                Button {
+                                    NSPasteboard.general.clearContents()
+                                    NSPasteboard.general.setString(node.url.path, forType: .string)
+                                } label: {
+                                    Label("Copy Path", systemImage: "doc.on.doc")
+                                }
+                            }
                     }
                 }
             }

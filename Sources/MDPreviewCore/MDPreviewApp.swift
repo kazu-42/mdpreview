@@ -13,6 +13,7 @@ public struct MDPreviewApp: App {
                 .background(Color(nsColor: .textBackgroundColor))
                 .onAppear {
                     openFromCommandLineArgs()
+                    restoreStateIfNeeded()
                 }
                 .onReceive(NotificationCenter.default.publisher(for: .didRequestOpenFile)) { notification in
                     if let url = notification.object as? URL {
@@ -108,6 +109,13 @@ public struct MDPreviewApp: App {
         for arg in args {
             guard !arg.hasPrefix("-") else { continue }
             workspace.openFromPath(arg)
+        }
+    }
+
+    private func restoreStateIfNeeded() {
+        // Only restore if no files were opened via CLI
+        if workspace.tabs.isEmpty {
+            workspace.restoreState()
         }
     }
 }
