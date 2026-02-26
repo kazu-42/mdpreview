@@ -1,13 +1,68 @@
 #!/bin/sh
 # MDPreview CLI - opens Markdown files and directories for preview
 
+VERSION="1.2.0"
 APP="/Applications/MDPreview.app"
 
-if [ -z "$1" ]; then
+show_help() {
+    cat << 'EOF'
+MDPreview - Lightweight Markdown preview app for macOS
+
+USAGE:
+    mdpreview [OPTIONS] [FILE|DIRECTORY...]
+
+OPTIONS:
+    -h, --help      Show this help message
+    -v, --version   Show version information
+
+EXAMPLES:
+    mdpreview                    Launch the app
+    mdpreview README.md          Preview a file
+    mdpreview file1.md file2.md  Open multiple files as tabs
+    mdpreview .                  Open current directory with file tree
+    mdpreview ~/projects/        Open a directory
+
+INSTALLATION:
+    brew install --cask kazu-42/tap/mdpreview
+
+For more information, visit: https://github.com/kazu-42/mdpreview
+EOF
+    exit 0
+}
+
+show_version() {
+    echo "mdpreview $VERSION"
+    exit 0
+}
+
+# Parse options
+while [ $# -gt 0 ]; do
+    case "$1" in
+        -h|--help)
+            show_help
+            ;;
+        -v|--version)
+            show_version
+            ;;
+        --)
+            shift
+            break
+            ;;
+        -*)
+            echo "mdpreview: unknown option '$1'" >&2
+            echo "Try 'mdpreview --help' for more information." >&2
+            exit 1
+            ;;
+        *)
+            break
+            ;;
+    esac
+done
+
+if [ $# -eq 0 ]; then
     # No arguments - just open the app
     open -a "$APP"
 else
     # Pass all arguments to the app
-    # open -a passes arguments via NSApplication delegate
     open -a "$APP" "$@"
 fi
