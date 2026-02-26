@@ -2,7 +2,7 @@
 
 一款轻量、快速的 macOS Markdown 预览应用。专为需要从终端快速预览 `plan.md`、`README.md` 及其他 Markdown 文件的开发者打造。
 
-[English](README.md) | [日本語](README.ja.md) | [한국어](README.ko.md) | [Español](README.es.md) | [Français](README.fr.md) | [Deutsch](README.de.md) | [Português](README.pt-BR.md)
+[English](../../README.md) | [日本語](README.ja.md) | [한국어](README.ko.md) | [Español](README.es.md) | [Français](README.fr.md) | [Deutsch](README.de.md) | [Português](README.pt-BR.md)
 
 ![macOS](https://img.shields.io/badge/macOS-13.0%2B-blue)
 ![Swift](https://img.shields.io/badge/Swift-5.9%2B-orange)

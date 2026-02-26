@@ -2,7 +2,7 @@
 
 macOS용 가볍고 빠른 Markdown 미리보기 앱입니다. 터미널에서 `plan.md`, `README.md` 및 기타 Markdown 파일을 빠르게 미리보기해야 하는 개발자를 위해 제작되었습니다.
 
-[English](README.md) | [日本語](README.ja.md) | [Español](README.es.md) | [Français](README.fr.md) | [Deutsch](README.de.md) | [Português](README.pt-BR.md)
+[English](../../README.md) | [日本語](README.ja.md) | [Español](README.es.md) | [Français](README.fr.md) | [Deutsch](README.de.md) | [Português](README.pt-BR.md) | [简体中文](README.zh-CN.md)
 
 ![macOS](https://img.shields.io/badge/macOS-13.0%2B-blue)
 ![Swift](https://img.shields.io/badge/Swift-5.9%2B-orange)

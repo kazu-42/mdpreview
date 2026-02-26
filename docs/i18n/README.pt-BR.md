@@ -2,7 +2,7 @@
 
 Um aplicativo de preview Markdown leve e rapido para macOS. Criado para desenvolvedores que precisam visualizar rapidamente `plan.md`, `README.md` e outros arquivos Markdown pelo terminal.
 
-[English](README.md) | [日本語](README.ja.md) | [한국어](README.ko.md) | [Español](README.es.md) | [Français](README.fr.md) | [Deutsch](README.de.md)]
+[English](../../README.md) | [日本語](README.ja.md) | [한국어](README.ko.md) | [Español](README.es.md) | [Français](README.fr.md) | [Deutsch](README.de.md) | [简体中文](README.zh-CN.md)
 
 ![macOS](https://img.shields.io/badge/macOS-13.0%2B-blue)
 ![Swift](https://img.shields.io/badge/Swift-5.9%2B-orange)

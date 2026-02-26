@@ -1,6 +1,7 @@
 # Build artifacts
 .build/
 build/
+build-old/
 *.o
 *.d
 
@@ -25,6 +26,9 @@ DerivedData/
 .vscode/
 *.swp
 *~
+
+# Claude Code
+.claude/
 
 # Entire
 .entire/
