@@ -1,0 +1,28 @@
+{
+  "cli_version": "0.4.7",
+  "checkpoint_id": "061a1302cf37",
+  "strategy": "manual-commit",
+  "branch": "main",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "Sources/MDPreviewCore/FileTree.swift",
+    "Supporting/Info.plist",
+    "Supporting/mdpreview"
+  ],
+  "sessions": [
+    {
+      "metadata": "/06/1a1302cf37/0/metadata.json",
+      "transcript": "/06/1a1302cf37/0/full.jsonl",
+      "context": "/06/1a1302cf37/0/context.md",
+      "content_hash": "/06/1a1302cf37/0/content_hash.txt",
+      "prompt": "/06/1a1302cf37/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 494223,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 28359360,
+    "output_tokens": 53472,
+    "api_call_count": 290
+  }
+}
