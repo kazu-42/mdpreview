@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 public struct MDPreviewApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
@@ -30,25 +31,34 @@ public struct MDPreviewApp: App {
                 .keyboardShortcut("o", modifiers: .command)
             }
 
+            CommandGroup(after: .saveItem) {
+                Button("Export Logs...") {
+                    exportLogs()
+                }
+            }
+
             CommandGroup(after: .appSettings) {
                 Button("Install Command Line Tool...") {
                     CLIInstaller.install()
                 }
             }
 
-            // MARK: - View Menu
-            CommandMenu("View") {
+            // MARK: - View Menu (extend default View menu)
+            CommandGroup(after: .toolbar) {
                 Button("Toggle Sidebar") {
                     workspace.toggleSidebar()
                 }
                 .keyboardShortcut("s", modifiers: [.command, .control])
 
+                Button("Toggle Table of Contents") {
+                    NotificationCenter.default.post(name: .toggleTOC, object: nil)
+                }
+                .keyboardShortcut("t", modifiers: [.command, .control])
+
                 Divider()
 
-                Button("Actual Size") {
-                    // Reset zoom (future feature)
-                }
-                .keyboardShortcut("0", modifiers: .command)
+                Toggle("Show Hidden Files", isOn: $workspace.showHiddenFiles)
+                    .keyboardShortcut(".", modifiers: [.command, .shift])
             }
 
             // MARK: - Window Menu
@@ -116,6 +126,23 @@ public struct MDPreviewApp: App {
         // Only restore if no files were opened via CLI
         if workspace.tabs.isEmpty {
             workspace.restoreState()
+        }
+    }
+
+    private func exportLogs() {
+        let panel = NSSavePanel()
+        panel.title = "Export Logs"
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd_HHmmss"
+        panel.nameFieldStringValue = "mdpreview-\(formatter.string(from: Date())).log"
+        panel.allowedContentTypes = [UTType(filenameExtension: "log") ?? .plainText]
+
+        if panel.runModal() == .OK, let url = panel.url {
+            do {
+                try AppLogger.shared.exportLogs(to: url)
+            } catch {
+                workspace.errorMessage = "Failed to export logs: \(error.localizedDescription)"
+            }
         }
     }
 }

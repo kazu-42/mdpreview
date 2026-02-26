@@ -27,12 +27,13 @@ public struct FileTreeNode: Identifiable, Hashable {
         ".venv", "venv", ".tox", ".cache",
     ]
 
-    public static func buildTree(from url: URL) -> [FileTreeNode] {
+    public static func buildTree(from url: URL, showHidden: Bool = true) -> [FileTreeNode] {
         let fm = FileManager.default
+        let options: FileManager.DirectoryEnumerationOptions = showHidden ? [] : [.skipsHiddenFiles]
         guard let contents = try? fm.contentsOfDirectory(
             at: url,
             includingPropertiesForKeys: [.isDirectoryKey],
-            options: []  // Show hidden files too
+            options: options
         ) else { return [] }
 
         var nodes: [FileTreeNode] = []
@@ -43,7 +44,7 @@ public struct FileTreeNode: Identifiable, Hashable {
 
             if isDir {
                 guard !skippedDirectories.contains(name) else { continue }
-                let children = buildTree(from: item)
+                let children = buildTree(from: item, showHidden: showHidden)
                 guard !children.isEmpty else { continue }
                 nodes.append(FileTreeNode(
                     id: item.path, url: item, name: name,

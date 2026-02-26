@@ -33,6 +33,12 @@ public final class Workspace: ObservableObject {
     @AppStorage("sidebarWidth") public var sidebarWidth: Double = 200
     @AppStorage("lastOpenedFiles") private var lastOpenedFilesData: Data = Data()
     @AppStorage("lastDirectory") private var lastDirectoryPath: String = ""
+    @AppStorage("showHiddenFiles") private var storedShowHiddenFiles: Bool = true
+
+    /// Whether to show hidden files in the file tree
+    @Published public var showHiddenFiles: Bool = true {
+        didSet { refreshFileTree() }
+    }
 
     /// Computed property for showing error alerts
     public var showError: Bool {
@@ -47,7 +53,9 @@ public final class Workspace: ObservableObject {
 
     private let fileWatcher = FileWatcher()
 
-    public init() {}
+    public init() {
+        showHiddenFiles = storedShowHiddenFiles
+    }
 
     // MARK: - Computed Properties
 
@@ -92,7 +100,7 @@ public final class Workspace: ObservableObject {
 
     public func openDirectory(_ url: URL) {
         directoryURL = url.standardizedFileURL
-        fileTreeNodes = FileTreeNode.buildTree(from: url)
+        fileTreeNodes = FileTreeNode.buildTree(from: url, showHidden: showHiddenFiles)
         lastDirectoryPath = url.path
     }
 
@@ -189,6 +197,16 @@ public final class Workspace: ObservableObject {
 
     public func toggleSidebar() {
         NotificationCenter.default.post(name: .toggleSidebar, object: nil)
+    }
+
+    public func toggleHiddenFiles() {
+        showHiddenFiles.toggle()
+        storedShowHiddenFiles = showHiddenFiles
+    }
+
+    public func refreshFileTree() {
+        guard let dir = directoryURL else { return }
+        fileTreeNodes = FileTreeNode.buildTree(from: dir, showHidden: showHiddenFiles)
     }
 
     // MARK: - State Persistence
@@ -335,4 +353,5 @@ public final class Workspace: ObservableObject {
 
 extension Notification.Name {
     public static let toggleSidebar = Notification.Name("com.mdpreview.toggleSidebar")
+    public static let toggleTOC = Notification.Name("com.mdpreview.toggleTOC")
 }

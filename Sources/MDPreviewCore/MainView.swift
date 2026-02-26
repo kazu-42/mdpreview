@@ -79,6 +79,11 @@ public struct MainView: View {
                 .help("Toggle Table of Contents")
             }
         }
+        .onReceive(NotificationCenter.default.publisher(for: .toggleTOC)) { _ in
+            withAnimation {
+                showTOC.toggle()
+            }
+        }
     }
 
     // MARK: - Drag and Drop

@@ -47,6 +47,8 @@ public struct MarkdownWebView: NSViewRepresentable {
     }
 
     private func loadTemplate(into webView: WKWebView, baseURL: URL?) {
+        AppLogger.shared.log("loadTemplate called, baseURL: \(baseURL?.path ?? "nil")")
+
         // Find template.html - check app bundle locations first to avoid triggering
         // Bundle.module's resource_bundle_accessor which crashes in packaged apps
         let possibleURLs: [URL?] = [
@@ -61,9 +63,22 @@ public struct MarkdownWebView: NSViewRepresentable {
             safeModuleURL(forResource: "template", withExtension: "html", subdirectory: "Resources")
         ]
 
+        // Log all possible paths for debugging
+        for (index, url) in possibleURLs.enumerated() {
+            guard let url = url else {
+                AppLogger.shared.log("Path \(index): nil")
+                continue
+            }
+            let exists = FileManager.default.fileExists(atPath: url.path)
+            AppLogger.shared.log("Path \(index): \(url.path), exists: \(exists)")
+        }
+
         guard let resourceURL = possibleURLs.compactMap({ $0 }).first(where: { FileManager.default.fileExists(atPath: $0.path) }) else {
+            AppLogger.shared.log("ERROR: No template.html found!")
             return
         }
+
+        AppLogger.shared.log("Using template: \(resourceURL.path)")
 
         // Use the markdown file's directory as base URL for resolving relative paths
         let readAccessURL: URL
@@ -209,6 +224,7 @@ public struct MarkdownWebView: NSViewRepresentable {
         }
 
         public func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+            AppLogger.shared.log("WebView finished loading")
             isLoaded = true
             if let content = pendingContent {
                 pendingContent = nil
@@ -221,6 +237,14 @@ public struct MarkdownWebView: NSViewRepresentable {
                 let basePath = baseURL?.path ?? ""
                 webView.evaluateJavaScript("render(`\(escaped)`, `\(basePath)`)")
             }
+        }
+
+        public func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+            AppLogger.shared.log("WebView navigation failed: \(error.localizedDescription)")
+        }
+
+        public func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+            AppLogger.shared.log("WebView provisional navigation failed: \(error.localizedDescription)")
         }
 
         public func webView(
