@@ -97,9 +97,72 @@ public struct MarkdownWebView: NSViewRepresentable {
     }
 
     private func evaluateRender(webView: WKWebView, content: String, baseURL: URL? = nil) {
-        let escaped = MarkdownWebView.escapeForJavaScript(content)
+        var processedContent = content
+
+        // Convert relative image paths to absolute file URLs
+        if let base = baseURL {
+            processedContent = Self.rewriteRelativePaths(in: content, baseURL: base)
+        }
+
+        let escaped = MarkdownWebView.escapeForJavaScript(processedContent)
         let basePath = baseURL?.path ?? ""
         webView.evaluateJavaScript("render(`\(escaped)`, `\(basePath)`)")
+    }
+
+    /// Rewrite relative image and link paths to absolute file URLs
+    private static func rewriteRelativePaths(in markdown: String, baseURL: URL) -> String {
+        let baseDirectory = baseURL.path
+
+        // Pattern to match markdown images and links with relative paths
+        // Matches: ![](./image.png), ![](screenshots/img.png), [](./file.md)
+        // Does NOT match: ![](http://...), ![](https://...), ![](#anchor)
+        let relativePattern = #"(!?\[[^\]]*\]\()(\.\/[^)]+|[^)#:\s][^)]*[^\)#:\s])(\))"#
+
+        var result = markdown
+
+        // Use NSDataDetector-like approach with regex
+        if let regex = try? NSRegularExpression(pattern: relativePattern, options: []) {
+            let range = NSRange(markdown.startIndex..., in: markdown)
+            let matches = regex.matches(in: markdown, options: [], range: range)
+
+            // Process matches in reverse order to maintain correct indices
+            for match in matches.reversed() {
+                guard match.numberOfRanges >= 3,
+                      let prefixRange = Range(match.range(at: 1), in: markdown),
+                      let pathRange = Range(match.range(at: 2), in: markdown) else {
+                    continue
+                }
+
+                let prefix = String(markdown[prefixRange])  // ![]( or [](
+                var relativePath = String(markdown[pathRange])  // ./image.png or screenshots/img.png
+
+                // Skip if already an absolute URL or anchor
+                if relativePath.hasPrefix("http://") ||
+                   relativePath.hasPrefix("https://") ||
+                   relativePath.hasPrefix("file://") ||
+                   relativePath.hasPrefix("#") ||
+                   relativePath.hasPrefix("/") ||
+                   relativePath.hasPrefix("data:") {
+                    continue
+                }
+
+                // Remove leading ./
+                if relativePath.hasPrefix("./") {
+                    relativePath = String(relativePath.dropFirst(2))
+                }
+
+                // Construct absolute file URL
+                let absolutePath = "file://\(baseDirectory)/\(relativePath)"
+
+                // Replace in result
+                if let fullMatchRange = Range(match.range, in: result) {
+                    let replacement = "\(prefix)\(absolutePath))"
+                    result.replaceSubrange(fullMatchRange, with: replacement)
+                }
+            }
+        }
+
+        return result
     }
 
     /// Escape a string for safe embedding in a JavaScript template literal.
@@ -123,7 +186,12 @@ public struct MarkdownWebView: NSViewRepresentable {
             isLoaded = true
             if let content = pendingContent {
                 pendingContent = nil
-                let escaped = MarkdownWebView.escapeForJavaScript(content)
+                // Convert relative paths to absolute file URLs
+                var processedContent = content
+                if let base = baseURL {
+                    processedContent = MarkdownWebView.rewriteRelativePaths(in: content, baseURL: base)
+                }
+                let escaped = MarkdownWebView.escapeForJavaScript(processedContent)
                 let basePath = baseURL?.path ?? ""
                 webView.evaluateJavaScript("render(`\(escaped)`, `\(basePath)`)")
             }
