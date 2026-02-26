@@ -1,0 +1,296 @@
+Implement the following plan:
+
+# MDPreview v1.2.8 - Menu Improvements & Logging Plan
+
+## Context
+
+User reported issues with v1.2.7:
+1. Menu barにViewが2つある - 重複しているので統合したい
+2. ⌘⇧.で隠しファイル/ディレクトリの表示非表示を切り替えたい（Finderと同じショートカット）
+3. メニューバーを拡充してGUIで操作できるようにしたい
+4. Homebrew経由でインストールするとmarkdownが表示されない - デバッグ用ログが必要
+5. ログをダウンロードできるようにしたい
+
+## Problem Analysis
+
+### Issue 1: 重複するViewメニュー
+
+**Root cause**: `MDPreviewApp.swift`で`CommandMenu("View")`を使用しているが、SwiftUIはデフォルトでViewメニューを追加するため重複している。
+
+**解決策**: `CommandGroup(replacing: .sidebar)`または`CommandGroup(after: .toolbar)`を使用してデフォルトのViewメニューを拡張する。
+
+### Issue 2: 隠しファイル切り替え
+
+**現在の状態**: `FileTree.swift`で`options: []`を設定して隠しファイルを常に表示している。
+
+**必要な変更**:
+1. `Workspace`に`@Published var showHiddenFiles: Bool`を追加
+2. `@AppStorage`で永続化
+3. `FileTreeNode.buildTree`に`showHidden`パラメータを追加
+4. ⌘⇧.ショートカットを追加
+
+### Issue 3: メニューバー拡充
+
+追加するメニュー項目:
+- **View**
+  - Toggle Sidebar (⌃⌘S)
+  - Toggle Hidden Files (⇧⌘.)
+  - Toggle Table of Contents
+  - Zoom submenu (future)
+- **File**
+  - Export Logs... (debug用)
+
+### Issue 4 & 5: ログ機能
+
+**実装方法**:
+1. `Logger.swift`を作成 - ファイルにログを書き込む
+2. `MarkdownWebView.swift`でリソース読み込みエラーをログ
+3. メニューからログファイルを保存/表示
+
+## Implementation Plan
+
+### Step 1: Create Logger
+
+**File**: `Sources/MDPreviewCore/Logger.swift`
+
+```swift
+import Foundation
+
+public final class AppLogger {
+    public static let shared = AppLogger()
+
+    private let logFileURL: URL
+    private let queue = DispatchQueue(label: "com.mdpreview.logger")
+
+    public var logPath: String { logFileURL.path }
+
+    private init() {
+        let logsDir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
+            .appendingPathComponent("MDPreview/Logs")
+        try? FileManager.default.createDirectory(at: logsDir, withIntermediateDirectories: true)
+        logFileURL = logsDir.appendingPathComponent("mdpreview.log")
+    }
+
+    public func log(_ message: String) {
+        let timestamp = ISO8601DateFormatter().string(from: Date())
+        let entry = "[\(timestamp)] \(message)\n"
+        queue.async {
+            try? entry.append(contentsOf: self.logFileURL, ... )
+        }
+        print("[MDPreview] \(message)")
+    }
+
+    public func getLogs() -> String {
+        try? String(contentsOf: logFileURL) ?? ""
+    }
+
+    public func exportLogs(to url: URL) {
+        try? FileManager.default.copyItem(at: logFileURL, to: url)
+    }
+}
+```
+
+### Step 2: Add Hidden Files Toggle
+
+**File**: `Sources/MDPreviewCore/Workspace.swift`
+
+```swift
+@Published public var showHiddenFiles: Bool = true {
+    didSet { refreshFileTree() }
+}
+@AppStorage("showHiddenFiles") private var storedShowHiddenFiles: Bool = true
+
+// In init():
+showHiddenFiles = storedShowHiddenFiles
+
+// Add method:
+public func refreshFileTree() {
+    guard let dir = directoryURL else { return }
+    fileTreeNodes = FileTreeNode.buildTree(from: dir, showHidden: showHiddenFiles)
+}
+
+public func toggleHiddenFiles() {
+    showHiddenFiles.toggle()
+    storedShowHiddenFiles = showHiddenFiles
+}
+```
+
+**File**: `Sources/MDPreviewCore/FileTree.swift`
+
+```swift
+public static func buildTree(from url: URL, showHidden: Bool = true) -> [FileTreeNode] {
+    let options: FileManager.DirectoryEnumerationOptions = showHidden ? [] : [.skipsHiddenFiles]
+    guard let contents = try? fm.contentsOfDirectory(
+        at: url,
+        includingPropertiesForKeys: [.isDirectoryKey],
+        options: options
+    ) else { return [] }
+    // ... rest unchanged
+}
+```
+
+### Step 3: Fix Menu Bar
+
+**File**: `Sources/MDPreviewCore/MDPreviewApp.swift`
+
+```swift
+.commands {
+    // File menu - add export logs
+    CommandGroup(after: .saveItem) {
+        Button("Export Logs...") {
+            exportLogs()
+        }
+    }
+
+    // View menu - extend default instead of replacing
+    CommandGroup(after: .toolbar) {
+        Picker("Hidden Files", selection: $workspace.showHiddenFiles) {
+            Text("Show").tag(true)
+            Text("Hide").tag(false)
+        }
+        .pickerStyle(.inline)
+
+        Divider()
+
+        Button("Toggle Sidebar") {
+            workspace.toggleSidebar()
+        }
+        .keyboardShortcut("s", modifiers: [.command, .control])
+
+        Button("Toggle Table of Contents") {
+            NotificationCenter.default.post(name: .toggleTOC, object: nil)
+        }
+        .keyboardShortcut("t", modifiers: [.command, .control])
+    }
+
+    // Keyboard shortcut for hidden files (Finder style)
+    CommandGroup(before: .toolbar) {
+        Button("Toggle Hidden Files") {
+            workspace.toggleHiddenFiles()
+        }
+        .keyboardShortcut(".", modifiers: [.command, .shift])
+    }
+}
+```
+
+### Step 4: Add Logging to MarkdownWebView
+
+**File**: `Sources/MDPreviewCore/MarkdownWebView.swift`
+
+```swift
+private func loadTemplate(into webView: WKWebView, baseURL: URL?) {
+    // Log all possible paths for debugging
+    AppLogger.shared.log("loadTemplate called, baseURL: \(baseURL?.path ?? "nil")")
+
+    let possibleURLs: [URL?] = [
+        // ... existing paths
+    ]
+
+    for (index, url) in possibleURLs.enumerated() {
+        guard let url = url else {
+            AppLogger.shared.log("Path \(index): nil")
+            continue
+        }
+        let exists = FileManager.default.fileExists(atPath: url.path)
+        AppLogger.shared.log("Path \(index): \(url.path), exists: \(exists)")
+    }
+
+    guard let resourceURL = possibleURLs.compactMap({ $0 }).first(where: { ... }) else {
+        AppLogger.shared.log("ERROR: No template.html found!")
+        return
+    }
+
+    AppLogger.shared.log("Using template: \(resourceURL.path)")
+    // ... rest
+}
+
+// In Coordinator.webView didFinish:
+public func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+    AppLogger.shared.log("WebView finished loading")
+    // ...
+}
+
+// Add error logging
+public func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+    AppLogger.shared.log("WebView navigation failed: \(error.localizedDescription)")
+}
+
+public func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+    AppLogger.shared.log("WebView provisional navigation failed: \(error.localizedDescription)")
+}
+```
+
+### Step 5: Update Version
+
+- `Supporting/Info.plist`: 1.2.7 → 1.2.8
+- `Supporting/mdpreview`: VERSION="1.2.8"
+
+## Files to Modify
+
+1. `Sources/MDPreviewCore/Logger.swift` - **NEW** ログ機能
+2. `Sources/MDPreviewCore/Workspace.swift` - showHiddenFiles追加
+3. `Sources/MDPreviewCore/FileTree.swift` - showHiddenパラメータ追加
+4. `Sources/MDPreviewCore/MDPreviewApp.swift` - メニュー修正
+5. `Sources/MDPreviewCore/MainView.swift` - TOC toggle notification
+6. `Sources/MDPreviewCore/MarkdownWebView.swift` - ログ追加
+7. `Supporting/Info.plist` - バージョン更新
+8. `Supporting/mdpreview` - バージョン更新
+
+## Verification
+
+1. ローカルビルド:
+   ```bash
+   swift build -c release --arch arm64
+   ```
+
+2. テスト実行:
+   ```bash
+   swift test
+   ```
+
+3. 動作確認:
+   - ⌘⇧. で隠しファイルの表示/非表示が切り替わる
+   - メニューバーにViewが1つだけ表示される
+   - File > Export Logsでログを保存できる
+   - Homebrew経由でインストール後、ログでエラー原因を確認できる
+
+
+If you need specific details from before exiting plan mode (like exact code snippets, error messages, or content you generated), read the full transcript at: /Users/kazu42/.claude/projects/-Users-kazu42-dev-mdpreview/3ad7a41f-4c08-4eae-89fc-3876a292946d.jsonl
+
+If this plan can be broken down into multiple independent tasks, consider using the TeamCreate tool to create a team and parallelize the work.
+
+---
+
+Universal Binaryにしてほしい。
+
+---
+
+署名入れて、リリースしておいて
+
+---
+
+spctl, notarytoolとかやった？
+export APPLE_ID="your-apple-id@email.com"
+export TEAM_ID="6RQMKB9NL7"
+export APP_PASSWORD="app-specific-password"
+この辺は、.envに登録しておくね。.env.local作っておいて
+
+---
+
+stapler, quarantineとか大丈夫？
+
+---
+
+app passwordってhttps://account.apple.com/account/manageのアプリ用パスワードのことだよね
+
+---
+
+登録した
+
+---
+
+.envが変わってる。てか、.env.localはもういらないから削除して
+
+---
+
+リリースして
