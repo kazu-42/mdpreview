@@ -40,7 +40,7 @@ public struct MarkdownWebView: NSViewRepresentable {
         }
 
         if context.coordinator.isLoaded {
-            evaluateRender(webView: webView, content: markdownContent)
+            evaluateRender(webView: webView, content: markdownContent, baseURL: baseURL)
         } else {
             context.coordinator.pendingContent = markdownContent
         }
@@ -66,9 +66,10 @@ public struct MarkdownWebView: NSViewRepresentable {
         webView.loadFileURL(resourceURL, allowingReadAccessTo: readAccessURL)
     }
 
-    private func evaluateRender(webView: WKWebView, content: String) {
+    private func evaluateRender(webView: WKWebView, content: String, baseURL: URL? = nil) {
         let escaped = MarkdownWebView.escapeForJavaScript(content)
-        webView.evaluateJavaScript("render(`\(escaped)`)")
+        let basePath = baseURL?.path ?? ""
+        webView.evaluateJavaScript("render(`\(escaped)`, `\(basePath)`)")
     }
 
     /// Escape a string for safe embedding in a JavaScript template literal.
@@ -93,7 +94,8 @@ public struct MarkdownWebView: NSViewRepresentable {
             if let content = pendingContent {
                 pendingContent = nil
                 let escaped = MarkdownWebView.escapeForJavaScript(content)
-                webView.evaluateJavaScript("render(`\(escaped)`)")
+                let basePath = baseURL?.path ?? ""
+                webView.evaluateJavaScript("render(`\(escaped)`, `\(basePath)`)")
             }
         }
 
@@ -102,19 +104,34 @@ public struct MarkdownWebView: NSViewRepresentable {
             decidePolicyFor navigationAction: WKNavigationAction,
             decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
         ) {
-            // Open external links in the default browser
+            // Handle link clicks
             if navigationAction.navigationType == .linkActivated,
                let url = navigationAction.request.url {
-                // Allow local file URLs (images, etc.)
+
+                // Markdown files: open in app (new tab)
+                if url.isFileURL && isMarkdownFile(url) {
+                    NotificationCenter.default.post(name: .didRequestOpenFile, object: url)
+                    decisionHandler(.cancel)
+                    return
+                }
+
+                // Other local file URLs (images, etc.): allow in webview
                 if url.isFileURL {
                     decisionHandler(.allow)
                     return
                 }
+
+                // External links: open in default browser
                 NSWorkspace.shared.open(url)
                 decisionHandler(.cancel)
                 return
             }
             decisionHandler(.allow)
+        }
+
+        private func isMarkdownFile(_ url: URL) -> Bool {
+            let ext = url.pathExtension.lowercased()
+            return ext == "md" || ext == "markdown" || ext == "mdown" || ext == "mkd"
         }
     }
 }

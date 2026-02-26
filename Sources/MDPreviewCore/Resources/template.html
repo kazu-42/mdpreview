@@ -165,7 +165,17 @@
             breaks: false
         });
 
-        function render(markdown) {
+        function render(markdown, basePath) {
+            // Set base URL for relative path resolution (images, links)
+            if (basePath) {
+                var base = document.querySelector('base');
+                if (!base) {
+                    base = document.createElement('base');
+                    document.head.appendChild(base);
+                }
+                base.href = 'file://' + basePath + '/';
+            }
+
             // Save scroll position
             var scrollY = window.scrollY;
             var scrollHeight = document.documentElement.scrollHeight;
