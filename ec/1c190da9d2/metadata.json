@@ -1,0 +1,27 @@
+{
+  "cli_version": "0.4.7",
+  "checkpoint_id": "ec1c190da9d2",
+  "strategy": "manual-commit",
+  "branch": "main",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "Sources/MDPreviewCore/MainView.swift",
+    "Sources/MDPreviewCore/Workspace.swift"
+  ],
+  "sessions": [
+    {
+      "metadata": "/ec/1c190da9d2/0/metadata.json",
+      "transcript": "/ec/1c190da9d2/0/full.jsonl",
+      "context": "/ec/1c190da9d2/0/context.md",
+      "content_hash": "/ec/1c190da9d2/0/content_hash.txt",
+      "prompt": "/ec/1c190da9d2/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 286069,
+    "cache_creation_tokens": 138307,
+    "cache_read_tokens": 27532886,
+    "output_tokens": 125118,
+    "api_call_count": 313
+  }
+}
