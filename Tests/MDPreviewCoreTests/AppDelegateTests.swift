@@ -17,7 +17,6 @@ final class AppDelegateTests: XCTestCase {
             return url == testURL
         }
 
-        // Simulate the application opening a URL
         delegate.application(NSApplication.shared, open: [testURL])
 
         waitForExpectations(timeout: 1.0)
@@ -28,7 +27,6 @@ final class AppDelegateTests: XCTestCase {
     func testOpenEmptyURLsDoesNotPost() {
         let delegate = AppDelegate()
 
-        // Subscribe and verify no notification is posted
         var received = false
         let observer = NotificationCenter.default.addObserver(
             forName: .didRequestOpenFile,
@@ -50,24 +48,36 @@ final class AppDelegateTests: XCTestCase {
         NotificationCenter.default.removeObserver(observer)
     }
 
-    // MARK: - Only first URL is posted
+    // MARK: - Multiple URLs post notifications for all
 
-    func testOpenMultipleURLsPostsOnlyFirst() {
+    func testOpenMultipleURLsPostsAll() {
         let delegate = AppDelegate()
         let url1 = URL(fileURLWithPath: "/tmp/first.md")
         let url2 = URL(fileURLWithPath: "/tmp/second.md")
 
-        _ = expectation(
-            forNotification: .didRequestOpenFile,
-            object: nil
+        var receivedURLs: [URL] = []
+        let observer = NotificationCenter.default.addObserver(
+            forName: .didRequestOpenFile,
+            object: nil,
+            queue: .main
         ) { notification in
-            guard let url = notification.object as? URL else { return false }
-            return url == url1
+            if let url = notification.object as? URL {
+                receivedURLs.append(url)
+            }
         }
 
         delegate.application(NSApplication.shared, open: [url1, url2])
 
+        let waitExp = expectation(description: "wait for notifications")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+            waitExp.fulfill()
+        }
         waitForExpectations(timeout: 1.0)
+
+        XCTAssertEqual(receivedURLs.count, 2)
+        XCTAssertEqual(receivedURLs[0], url1)
+        XCTAssertEqual(receivedURLs[1], url2)
+        NotificationCenter.default.removeObserver(observer)
     }
 
     // MARK: - Notification name is correct

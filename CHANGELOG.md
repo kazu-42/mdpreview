@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-02-26
+
+### Added
+- **Tabs support**: Open multiple files as tabs with `Cmd+Shift+]/[` navigation
+- **File tree sidebar**: Open a directory to browse and preview Markdown files
+- **Directory CLI**: `mdpreview .` or `mdpreview ~/path/to/dir/` opens with file tree
+- **Multi-file CLI**: `mdpreview file1.md file2.md` opens multiple tabs
+- **CLI installer**: Menu item to install `mdpreview` command from the app
+- Improved window management and state restoration
+
 ## [1.0.0] - 2026-02-26
 
 ### Added

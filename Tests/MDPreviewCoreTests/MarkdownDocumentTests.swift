@@ -1,14 +1,14 @@
 import XCTest
 @testable import MDPreviewCore
 
-final class MarkdownDocumentTests: XCTestCase {
+final class WorkspaceTests: XCTestCase {
 
     private var tempDir: URL!
 
     override func setUp() {
         super.setUp()
         tempDir = FileManager.default.temporaryDirectory
-            .appendingPathComponent("MarkdownDocumentTests-\(UUID().uuidString)")
+            .appendingPathComponent("WorkspaceTests-\(UUID().uuidString)")
         try? FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
     }
 
@@ -17,31 +17,59 @@ final class MarkdownDocumentTests: XCTestCase {
         super.tearDown()
     }
 
-    // MARK: - Open with absolute path
+    // MARK: - Open file
 
-    func testOpenWithAbsolutePath() {
+    func testOpenFileAddsTab() {
+        let fileURL = tempDir.appendingPathComponent("test.md")
+        try! "# Hello".write(to: fileURL, atomically: true, encoding: .utf8)
+
+        let ws = Workspace()
+        ws.openFile(fileURL)
+
+        XCTAssertEqual(ws.tabs.count, 1)
+        XCTAssertEqual(ws.selectedTab?.url, fileURL.standardizedFileURL)
+        XCTAssertEqual(ws.markdownContent, "# Hello")
+    }
+
+    func testOpenSameFileDoesNotDuplicate() {
+        let fileURL = tempDir.appendingPathComponent("test.md")
+        try! "content".write(to: fileURL, atomically: true, encoding: .utf8)
+
+        let ws = Workspace()
+        ws.openFile(fileURL)
+        ws.openFile(fileURL)
+
+        XCTAssertEqual(ws.tabs.count, 1)
+    }
+
+    func testOpenMultipleFiles() {
+        let file1 = tempDir.appendingPathComponent("a.md")
+        let file2 = tempDir.appendingPathComponent("b.md")
+        try! "content A".write(to: file1, atomically: true, encoding: .utf8)
+        try! "content B".write(to: file2, atomically: true, encoding: .utf8)
+
+        let ws = Workspace()
+        ws.openFile(file1)
+        ws.openFile(file2)
+
+        XCTAssertEqual(ws.tabs.count, 2)
+        XCTAssertEqual(ws.markdownContent, "content B")
+    }
+
+    // MARK: - Open via path
+
+    func testOpenFromAbsolutePath() {
         let fileURL = tempDir.appendingPathComponent("absolute.md")
         try! "# Hello".write(to: fileURL, atomically: true, encoding: .utf8)
 
-        let doc = MarkdownDocument()
-        doc.open(path: fileURL.path)
+        let ws = Workspace()
+        ws.openFromPath(fileURL.path)
 
-        // The reload happens synchronously for the file read, then dispatches to main
-        let expectation = expectation(description: "content loaded")
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-            expectation.fulfill()
-        }
-        waitForExpectations(timeout: 2.0)
-
-        XCTAssertEqual(doc.fileURL, fileURL)
-        XCTAssertEqual(doc.markdownContent, "# Hello")
-        XCTAssertNil(doc.errorMessage)
+        XCTAssertEqual(ws.tabs.count, 1)
+        XCTAssertEqual(ws.markdownContent, "# Hello")
     }
 
-    // MARK: - Open with relative path
-
-    func testOpenWithRelativePath() {
-        // Create a file in the current working directory
+    func testOpenFromRelativePath() {
         let cwd = FileManager.default.currentDirectoryPath
         let fileName = "relative-test-\(UUID().uuidString).md"
         let fileURL = URL(fileURLWithPath: cwd).appendingPathComponent(fileName)
@@ -49,22 +77,13 @@ final class MarkdownDocumentTests: XCTestCase {
 
         defer { try? FileManager.default.removeItem(at: fileURL) }
 
-        let doc = MarkdownDocument()
-        doc.open(path: fileName)
+        let ws = Workspace()
+        ws.openFromPath(fileName)
 
-        let expectation = expectation(description: "content loaded")
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-            expectation.fulfill()
-        }
-        waitForExpectations(timeout: 2.0)
-
-        XCTAssertEqual(doc.markdownContent, "relative content")
+        XCTAssertEqual(ws.markdownContent, "relative content")
     }
 
-    // MARK: - Open with tilde path
-
-    func testOpenWithTildePath() {
-        // Write to home directory temp location
+    func testOpenFromTildePath() {
         let homeDir = NSHomeDirectory()
         let fileName = ".mdpreview-tilde-test-\(UUID().uuidString).md"
         let fileURL = URL(fileURLWithPath: homeDir).appendingPathComponent(fileName)
@@ -72,168 +91,172 @@ final class MarkdownDocumentTests: XCTestCase {
 
         defer { try? FileManager.default.removeItem(at: fileURL) }
 
-        let doc = MarkdownDocument()
-        doc.open(path: "~/\(fileName)")
+        let ws = Workspace()
+        ws.openFromPath("~/\(fileName)")
 
-        let expectation = expectation(description: "content loaded")
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-            expectation.fulfill()
-        }
-        waitForExpectations(timeout: 2.0)
-
-        XCTAssertEqual(doc.markdownContent, "tilde content")
-        XCTAssertEqual(doc.fileURL?.path, fileURL.path)
+        XCTAssertEqual(ws.markdownContent, "tilde content")
     }
 
-    // MARK: - Reload updates content
+    // MARK: - Open directory
 
-    func testReloadUpdatesContent() {
-        let fileURL = tempDir.appendingPathComponent("reload.md")
-        try! "version 1".write(to: fileURL, atomically: true, encoding: .utf8)
+    func testOpenDirectorySetsFileTree() {
+        let dir = tempDir.appendingPathComponent("project")
+        try! FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try! "readme".write(to: dir.appendingPathComponent("README.md"), atomically: true, encoding: .utf8)
 
-        let doc = MarkdownDocument()
-        doc.open(url: fileURL)
+        let ws = Workspace()
+        ws.openDirectory(dir)
 
-        let loaded = expectation(description: "initial load")
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-            loaded.fulfill()
-        }
-        waitForExpectations(timeout: 2.0)
-        XCTAssertEqual(doc.markdownContent, "version 1")
+        XCTAssertNotNil(ws.directoryURL)
+        XCTAssertFalse(ws.fileTreeNodes.isEmpty)
+    }
 
-        // Modify the file
-        try! "version 2".write(to: fileURL, atomically: true, encoding: .utf8)
-        doc.reload()
+    func testOpenURLDetectsDirectory() {
+        let dir = tempDir.appendingPathComponent("mydir")
+        try! FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try! "x".write(to: dir.appendingPathComponent("a.md"), atomically: true, encoding: .utf8)
 
-        let reloaded = expectation(description: "reloaded")
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-            reloaded.fulfill()
-        }
-        waitForExpectations(timeout: 2.0)
+        let ws = Workspace()
+        ws.openURL(dir)
 
-        XCTAssertEqual(doc.markdownContent, "version 2")
+        XCTAssertNotNil(ws.directoryURL)
+        XCTAssertEqual(ws.tabs.count, 0)
+    }
+
+    func testOpenURLDetectsFile() {
+        let fileURL = tempDir.appendingPathComponent("file.md")
+        try! "content".write(to: fileURL, atomically: true, encoding: .utf8)
+
+        let ws = Workspace()
+        ws.openURL(fileURL)
+
+        XCTAssertNil(ws.directoryURL)
+        XCTAssertEqual(ws.tabs.count, 1)
+    }
+
+    // MARK: - Tab management
+
+    func testCloseTab() {
+        let file1 = tempDir.appendingPathComponent("a.md")
+        let file2 = tempDir.appendingPathComponent("b.md")
+        try! "A".write(to: file1, atomically: true, encoding: .utf8)
+        try! "B".write(to: file2, atomically: true, encoding: .utf8)
+
+        let ws = Workspace()
+        ws.openFile(file1)
+        ws.openFile(file2)
+        XCTAssertEqual(ws.tabs.count, 2)
+
+        // Close the selected (second) tab
+        ws.closeTab(ws.selectedTabID!)
+        XCTAssertEqual(ws.tabs.count, 1)
+        XCTAssertEqual(ws.markdownContent, "A")
+    }
+
+    func testCloseLastTab() {
+        let fileURL = tempDir.appendingPathComponent("only.md")
+        try! "only".write(to: fileURL, atomically: true, encoding: .utf8)
+
+        let ws = Workspace()
+        ws.openFile(fileURL)
+        ws.closeTab(ws.selectedTabID!)
+
+        XCTAssertEqual(ws.tabs.count, 0)
+        XCTAssertNil(ws.selectedTabID)
+        XCTAssertEqual(ws.markdownContent, "")
+    }
+
+    func testSelectNextTab() {
+        let file1 = tempDir.appendingPathComponent("a.md")
+        let file2 = tempDir.appendingPathComponent("b.md")
+        try! "A".write(to: file1, atomically: true, encoding: .utf8)
+        try! "B".write(to: file2, atomically: true, encoding: .utf8)
+
+        let ws = Workspace()
+        ws.openFile(file1)
+        ws.openFile(file2)
+        // Currently on file2
+
+        ws.selectNextTab()
+        XCTAssertEqual(ws.markdownContent, "A") // Wrapped to first
+
+        ws.selectNextTab()
+        XCTAssertEqual(ws.markdownContent, "B")
+    }
+
+    func testSelectPreviousTab() {
+        let file1 = tempDir.appendingPathComponent("a.md")
+        let file2 = tempDir.appendingPathComponent("b.md")
+        try! "A".write(to: file1, atomically: true, encoding: .utf8)
+        try! "B".write(to: file2, atomically: true, encoding: .utf8)
+
+        let ws = Workspace()
+        ws.openFile(file1)
+        ws.openFile(file2)
+
+        ws.selectPreviousTab()
+        XCTAssertEqual(ws.markdownContent, "A")
     }
 
     // MARK: - Display name
 
-    func testDisplayNameReturnsFilename() {
-        let doc = MarkdownDocument()
-        doc.fileURL = URL(fileURLWithPath: "/tmp/readme.md")
-        XCTAssertEqual(doc.displayName, "readme.md")
+    func testDisplayNameWithTab() {
+        let fileURL = tempDir.appendingPathComponent("readme.md")
+        try! "x".write(to: fileURL, atomically: true, encoding: .utf8)
+
+        let ws = Workspace()
+        ws.openFile(fileURL)
+
+        XCTAssertEqual(ws.displayName, "readme.md")
     }
 
-    func testDisplayNameReturnsMDPreviewWhenNoFile() {
-        let doc = MarkdownDocument()
-        XCTAssertEqual(doc.displayName, "MDPreview")
+    func testDisplayNameWithDirectory() {
+        let dir = tempDir.appendingPathComponent("project")
+        try! FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try! "x".write(to: dir.appendingPathComponent("a.md"), atomically: true, encoding: .utf8)
+
+        let ws = Workspace()
+        ws.openDirectory(dir)
+
+        XCTAssertEqual(ws.displayName, "project")
     }
 
-    func testDisplayNameWithNestedPath() {
-        let doc = MarkdownDocument()
-        doc.fileURL = URL(fileURLWithPath: "/Users/test/Documents/notes/daily.md")
-        XCTAssertEqual(doc.displayName, "daily.md")
+    func testDisplayNameDefault() {
+        let ws = Workspace()
+        XCTAssertEqual(ws.displayName, "MDPreview")
     }
 
-    // MARK: - Open non-existent file sets error
+    // MARK: - Error handling
 
     func testOpenNonExistentFileSetsError() {
-        let doc = MarkdownDocument()
-        let bogusURL = tempDir.appendingPathComponent("no-such-file.md")
-        doc.open(url: bogusURL)
+        let ws = Workspace()
+        ws.openURL(tempDir.appendingPathComponent("no-such-file.md"))
 
-        let expectation = expectation(description: "error set")
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-            expectation.fulfill()
-        }
-        waitForExpectations(timeout: 2.0)
-
-        XCTAssertNotNil(doc.errorMessage)
-        XCTAssertEqual(doc.markdownContent, "")
+        XCTAssertNotNil(ws.errorMessage)
     }
 
-    // MARK: - File watching integration
+    // MARK: - File watching
 
-    func testFileWatchingUpdatesContentOnExternalModification() {
-        let fileURL = tempDir.appendingPathComponent("watch-integration.md")
-        try! "initial content".write(to: fileURL, atomically: true, encoding: .utf8)
+    func testFileWatchingUpdatesContent() {
+        let fileURL = tempDir.appendingPathComponent("watch.md")
+        try! "initial".write(to: fileURL, atomically: true, encoding: .utf8)
 
-        let doc = MarkdownDocument()
-        doc.open(url: fileURL)
+        let ws = Workspace()
+        ws.openFile(fileURL)
+        XCTAssertEqual(ws.markdownContent, "initial")
 
-        let initialLoad = expectation(description: "initial load")
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-            initialLoad.fulfill()
-        }
-        waitForExpectations(timeout: 2.0)
-        XCTAssertEqual(doc.markdownContent, "initial content")
-
-        // Externally modify the file (non-atomic to trigger write event)
-        let contentUpdated = expectation(description: "content updated via watcher")
-
-        // Observe changes to markdownContent
-        let cancellable = doc.$markdownContent.dropFirst().sink { newValue in
-            if newValue == "externally modified" {
-                contentUpdated.fulfill()
+        let updated = expectation(description: "content updated via watcher")
+        let cancellable = ws.$markdownContent.dropFirst().sink { newValue in
+            if newValue == "modified" {
+                updated.fulfill()
             }
         }
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-            try! "externally modified".write(to: fileURL, atomically: false, encoding: .utf8)
+            try! "modified".write(to: fileURL, atomically: false, encoding: .utf8)
         }
 
         waitForExpectations(timeout: 3.0)
         cancellable.cancel()
-    }
-
-    // MARK: - Open clears previous error
-
-    func testOpenClearsPreviousError() {
-        let doc = MarkdownDocument()
-
-        // First open a non-existent file to set an error
-        let bogusURL = tempDir.appendingPathComponent("nonexistent.md")
-        doc.open(url: bogusURL)
-
-        let errorSet = expectation(description: "error set")
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-            errorSet.fulfill()
-        }
-        waitForExpectations(timeout: 2.0)
-        XCTAssertNotNil(doc.errorMessage)
-
-        // Now open a valid file
-        let validURL = tempDir.appendingPathComponent("valid.md")
-        try! "valid content".write(to: validURL, atomically: true, encoding: .utf8)
-        doc.open(url: validURL)
-
-        let cleared = expectation(description: "error cleared")
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-            cleared.fulfill()
-        }
-        waitForExpectations(timeout: 2.0)
-
-        XCTAssertNil(doc.errorMessage)
-        XCTAssertEqual(doc.markdownContent, "valid content")
-    }
-
-    // MARK: - Reload with no file does nothing
-
-    func testReloadWithNoFileURLDoesNothing() {
-        let doc = MarkdownDocument()
-        doc.reload() // Should not crash
-        XCTAssertEqual(doc.markdownContent, "")
-        XCTAssertNil(doc.errorMessage)
-    }
-
-    // MARK: - Open sets fileURL
-
-    func testOpenSetsFileURL() {
-        let fileURL = tempDir.appendingPathComponent("seturl.md")
-        try! "test".write(to: fileURL, atomically: true, encoding: .utf8)
-
-        let doc = MarkdownDocument()
-        XCTAssertNil(doc.fileURL)
-
-        doc.open(url: fileURL)
-        XCTAssertEqual(doc.fileURL, fileURL)
     }
 }

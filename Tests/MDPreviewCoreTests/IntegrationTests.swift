@@ -37,19 +37,13 @@ final class IntegrationTests: XCTestCase {
         """
         try! markdownContent.write(to: fileURL, atomically: true, encoding: .utf8)
 
-        let doc = MarkdownDocument()
-        doc.open(url: fileURL)
+        let ws = Workspace()
+        ws.openFile(fileURL)
 
-        let loaded = expectation(description: "content loaded")
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-            loaded.fulfill()
-        }
-        waitForExpectations(timeout: 2.0)
-
-        XCTAssertEqual(doc.fileURL, fileURL)
-        XCTAssertEqual(doc.markdownContent, markdownContent)
-        XCTAssertNil(doc.errorMessage)
-        XCTAssertEqual(doc.displayName, "e2e.md")
+        XCTAssertNotNil(ws.selectedTab)
+        XCTAssertEqual(ws.markdownContent, markdownContent)
+        XCTAssertNil(ws.errorMessage)
+        XCTAssertTrue(ws.displayName.contains("e2e.md"))
     }
 
     // MARK: - End-to-end: modify file and verify update via file watcher
@@ -58,21 +52,13 @@ final class IntegrationTests: XCTestCase {
         let fileURL = tempDir.appendingPathComponent("live-update.md")
         try! "# Version 1".write(to: fileURL, atomically: true, encoding: .utf8)
 
-        let doc = MarkdownDocument()
-        doc.open(url: fileURL)
+        let ws = Workspace()
+        ws.openFile(fileURL)
+        XCTAssertEqual(ws.markdownContent, "# Version 1")
 
-        // Wait for initial load
-        let initialLoad = expectation(description: "initial load")
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-            initialLoad.fulfill()
-        }
-        waitForExpectations(timeout: 2.0)
-        XCTAssertEqual(doc.markdownContent, "# Version 1")
-
-        // Now modify the file and wait for the watcher to pick it up
         let updated = expectation(description: "content updated via watcher")
         var cancellable: AnyCancellable?
-        cancellable = doc.$markdownContent.dropFirst().sink { newValue in
+        cancellable = ws.$markdownContent.dropFirst().sink { newValue in
             if newValue == "# Version 2" {
                 updated.fulfill()
                 cancellable?.cancel()
@@ -84,7 +70,7 @@ final class IntegrationTests: XCTestCase {
         }
 
         waitForExpectations(timeout: 3.0)
-        XCTAssertEqual(doc.markdownContent, "# Version 2")
+        XCTAssertEqual(ws.markdownContent, "# Version 2")
     }
 
     // MARK: - End-to-end: open via path string
@@ -93,20 +79,14 @@ final class IntegrationTests: XCTestCase {
         let fileURL = tempDir.appendingPathComponent("path-string.md")
         try! "path test".write(to: fileURL, atomically: true, encoding: .utf8)
 
-        let doc = MarkdownDocument()
-        doc.open(path: fileURL.path)
+        let ws = Workspace()
+        ws.openFromPath(fileURL.path)
 
-        let loaded = expectation(description: "loaded via path string")
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-            loaded.fulfill()
-        }
-        waitForExpectations(timeout: 2.0)
-
-        XCTAssertEqual(doc.markdownContent, "path test")
-        XCTAssertEqual(doc.displayName, "path-string.md")
+        XCTAssertEqual(ws.markdownContent, "path test")
+        XCTAssertTrue(ws.displayName.contains("path-string.md"))
     }
 
-    // MARK: - End-to-end: multiple sequential opens
+    // MARK: - End-to-end: multiple sequential opens as tabs
 
     func testMultipleSequentialOpens() {
         let file1 = tempDir.appendingPathComponent("first.md")
@@ -114,27 +94,22 @@ final class IntegrationTests: XCTestCase {
         try! "first file".write(to: file1, atomically: true, encoding: .utf8)
         try! "second file".write(to: file2, atomically: true, encoding: .utf8)
 
-        let doc = MarkdownDocument()
+        let ws = Workspace()
 
-        // Open first file
-        doc.open(url: file1)
-        let loadFirst = expectation(description: "first file loaded")
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-            loadFirst.fulfill()
-        }
-        waitForExpectations(timeout: 2.0)
-        XCTAssertEqual(doc.markdownContent, "first file")
-        XCTAssertEqual(doc.displayName, "first.md")
+        ws.openFile(file1)
+        XCTAssertEqual(ws.markdownContent, "first file")
+        XCTAssertTrue(ws.displayName.contains("first.md"))
 
-        // Open second file (replaces first)
-        doc.open(url: file2)
-        let loadSecond = expectation(description: "second file loaded")
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-            loadSecond.fulfill()
-        }
-        waitForExpectations(timeout: 2.0)
-        XCTAssertEqual(doc.markdownContent, "second file")
-        XCTAssertEqual(doc.displayName, "second.md")
+        ws.openFile(file2)
+        XCTAssertEqual(ws.markdownContent, "second file")
+        XCTAssertTrue(ws.displayName.contains("second.md"))
+
+        // Both should be open as tabs
+        XCTAssertEqual(ws.tabs.count, 2)
+
+        // Switch back to first
+        ws.selectTab(ws.tabs[0].id)
+        XCTAssertEqual(ws.markdownContent, "first file")
     }
 
     // MARK: - End-to-end: Unicode content
@@ -151,16 +126,10 @@ final class IntegrationTests: XCTestCase {
         """
         try! content.write(to: fileURL, atomically: true, encoding: .utf8)
 
-        let doc = MarkdownDocument()
-        doc.open(url: fileURL)
+        let ws = Workspace()
+        ws.openFile(fileURL)
 
-        let loaded = expectation(description: "unicode content loaded")
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-            loaded.fulfill()
-        }
-        waitForExpectations(timeout: 2.0)
-
-        XCTAssertEqual(doc.markdownContent, content)
+        XCTAssertEqual(ws.markdownContent, content)
     }
 
     // MARK: - End-to-end: empty file
@@ -169,17 +138,11 @@ final class IntegrationTests: XCTestCase {
         let fileURL = tempDir.appendingPathComponent("empty.md")
         try! "".write(to: fileURL, atomically: true, encoding: .utf8)
 
-        let doc = MarkdownDocument()
-        doc.open(url: fileURL)
+        let ws = Workspace()
+        ws.openFile(fileURL)
 
-        let loaded = expectation(description: "empty file loaded")
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-            loaded.fulfill()
-        }
-        waitForExpectations(timeout: 2.0)
-
-        XCTAssertEqual(doc.markdownContent, "")
-        XCTAssertNil(doc.errorMessage)
+        XCTAssertEqual(ws.markdownContent, "")
+        XCTAssertNil(ws.errorMessage)
     }
 
     // MARK: - End-to-end: large file
@@ -190,17 +153,11 @@ final class IntegrationTests: XCTestCase {
         let content = lines.joined(separator: "\n")
         try! content.write(to: fileURL, atomically: true, encoding: .utf8)
 
-        let doc = MarkdownDocument()
-        doc.open(url: fileURL)
+        let ws = Workspace()
+        ws.openFile(fileURL)
 
-        let loaded = expectation(description: "large file loaded")
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-            loaded.fulfill()
-        }
-        waitForExpectations(timeout: 3.0)
-
-        XCTAssertEqual(doc.markdownContent, content)
-        XCTAssertEqual(doc.markdownContent.components(separatedBy: "\n").count, 1000)
+        XCTAssertEqual(ws.markdownContent, content)
+        XCTAssertEqual(ws.markdownContent.components(separatedBy: "\n").count, 1000)
     }
 
     // MARK: - Notification-driven open flow
@@ -209,22 +166,39 @@ final class IntegrationTests: XCTestCase {
         let fileURL = tempDir.appendingPathComponent("notification.md")
         try! "notification content".write(to: fileURL, atomically: true, encoding: .utf8)
 
-        // Simulate what MDPreviewApp does when receiving a notification
-        let doc = MarkdownDocument()
+        let ws = Workspace()
 
-        // Post the notification (as AppDelegate would)
+        // Simulate what MDPreviewApp does when receiving a notification
         NotificationCenter.default.post(name: .didRequestOpenFile, object: fileURL)
 
-        // In the real app, the notification handler calls doc.open(url:)
-        // Here we simulate it directly
-        doc.open(url: fileURL)
+        // In the real app, the notification handler calls workspace.openURL(url)
+        ws.openURL(fileURL)
 
-        let loaded = expectation(description: "notification flow loaded")
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-            loaded.fulfill()
-        }
-        waitForExpectations(timeout: 2.0)
+        XCTAssertEqual(ws.markdownContent, "notification content")
+    }
 
-        XCTAssertEqual(doc.markdownContent, "notification content")
+    // MARK: - Directory + file opening
+
+    func testOpenDirectoryThenFileFromTree() {
+        let dir = tempDir.appendingPathComponent("project")
+        try! FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try! "readme content".write(to: dir.appendingPathComponent("README.md"), atomically: true, encoding: .utf8)
+        try! "guide content".write(to: dir.appendingPathComponent("guide.md"), atomically: true, encoding: .utf8)
+
+        let ws = Workspace()
+        ws.openDirectory(dir)
+
+        XCTAssertNotNil(ws.directoryURL)
+        XCTAssertFalse(ws.fileTreeNodes.isEmpty)
+
+        // Simulate clicking a file in the tree
+        ws.openFile(dir.appendingPathComponent("README.md"))
+        XCTAssertEqual(ws.markdownContent, "readme content")
+        XCTAssertEqual(ws.tabs.count, 1)
+
+        // Open another file
+        ws.openFile(dir.appendingPathComponent("guide.md"))
+        XCTAssertEqual(ws.markdownContent, "guide content")
+        XCTAssertEqual(ws.tabs.count, 2)
     }
 }

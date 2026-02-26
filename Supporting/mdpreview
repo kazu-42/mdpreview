@@ -1,0 +1,13 @@
+#!/bin/sh
+# MDPreview CLI - opens Markdown files and directories for preview
+
+APP="/Applications/MDPreview.app"
+
+if [ -z "$1" ]; then
+    # No arguments - just open the app
+    open -a "$APP"
+else
+    # Pass all arguments to the app
+    # open -a passes arguments via NSApplication delegate
+    open -a "$APP" "$@"
+fi

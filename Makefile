@@ -23,6 +23,9 @@ bundle: build
 	mkdir -p $(APP_BUNDLE)/Contents/Resources
 	cp $(BUILD_DIR)/MDPreview $(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)
 	cp Supporting/Info.plist $(APP_BUNDLE)/Contents/
+	@# Bundle CLI tool
+	cp Supporting/mdpreview $(APP_BUNDLE)/Contents/Resources/mdpreview
+	chmod +x $(APP_BUNDLE)/Contents/Resources/mdpreview
 	@# Copy app icon if available
 	@if [ -f "Assets/AppIcon.icns" ]; then \
 		cp Assets/AppIcon.icns $(APP_BUNDLE)/Contents/Resources/AppIcon.icns; \
@@ -50,9 +53,8 @@ uninstall:
 
 cli: install
 	@mkdir -p /usr/local/bin
-	@printf '#!/bin/sh\n\nAPP="/Applications/MDPreview.app"\n\nif [ -z "$$1" ]; then\n    open -a "$$APP"\nelse\n    # Resolve to absolute path for open -a\n    FILE="$$(cd "$$(dirname "$$1")" 2>/dev/null && pwd)/$$(basename "$$1")"\n    open -a "$$APP" "$$FILE"\nfi\n' > /usr/local/bin/mdpreview
-	@chmod +x /usr/local/bin/mdpreview
-	@echo "Installed CLI: mdpreview"
+	@ln -sf /Applications/$(APP_NAME).app/Contents/Resources/mdpreview /usr/local/bin/mdpreview
+	@echo "Installed CLI: /usr/local/bin/mdpreview -> /Applications/$(APP_NAME).app/Contents/Resources/mdpreview"
 
 run: bundle
 	open $(APP_BUNDLE)

@@ -2,6 +2,8 @@
 
 A lightweight, fast Markdown preview app for macOS. Built for developers who need to quickly preview `plan.md`, `README.md`, and other Markdown files from the terminal.
 
+[日本語](README.ja.md) | [한국어](README.ko.md) | [Español](README.es.md) | [Français](README.fr.md) | [Deutsch](README.de.md) | [Português](README.pt-BR.md)
+
 ![macOS](https://img.shields.io/badge/macOS-13.0%2B-blue)
 ![Swift](https://img.shields.io/badge/Swift-5.9%2B-orange)
 ![License](https://img.shields.io/badge/License-MIT-green)
@@ -17,16 +19,26 @@ A lightweight, fast Markdown preview app for macOS. Built for developers who nee
 - **Full GFM support** - Tables, task lists, strikethrough, autolinks
 - **Syntax highlighting** - 40+ programming languages via [highlight.js](https://highlightjs.org/)
 - **Live reload** - Automatically refreshes when the file changes on disk
+- **Tabs** - Open multiple files as tabs, switch with Cmd+Shift+] / [
+- **File tree sidebar** - Open a directory to browse and preview Markdown files
 - **Dark/Light mode** - Follows macOS system appearance
+- **CLI-friendly** - `mdpreview file.md` launches instantly, returns to terminal
 - **Zero dependencies** - No external Swift packages
-- **CLI-friendly** - `mdpreview path/to/file.md`
 - **Lightweight** - ~200KB binary + ~160KB bundled JS/CSS
 
 ## Installation
 
+### Homebrew
+
+```bash
+brew install --cask kazu-42/tap/mdpreview
+```
+
 ### Download
 
 Download the latest `.dmg` or `.zip` from the [Releases](https://github.com/kazu-42/mdpreview/releases) page.
+
+After installing, open the app and go to **MDPreview > Install Command Line Tool...** to set up the `mdpreview` command.
 
 ### Build from Source
 
@@ -37,15 +49,11 @@ cd mdpreview
 # Build and create .app bundle
 make all
 
-# Install to /Applications and create CLI command
+# Install to /Applications
 make install
-make cli
-```
 
-### Homebrew (coming soon)
-
-```bash
-brew install --cask kazu-42/tap/mdpreview
+# Install CLI (requires sudo)
+sudo make cli
 ```
 
 ## Usage
@@ -56,25 +64,32 @@ brew install --cask kazu-42/tap/mdpreview
 # Open a Markdown file
 mdpreview README.md
 
-# Or use the full path
-mdpreview ~/projects/my-app/plan.md
+# Open multiple files as tabs
+mdpreview file1.md file2.md
 
-# Or launch the .app directly
-open -a MDPreview file.md
+# Open a directory with file tree sidebar
+mdpreview .
+mdpreview ~/projects/my-app/
+
+# Launch the app without arguments
+mdpreview
 ```
 
 ### From Finder
 
 - **Drag and drop** a `.md` file onto the MDPreview window or Dock icon
 - **Right-click** a `.md` file > Open With > MDPreview
-- Use **Cmd+O** to open a file from the menu
+- Use **Cmd+O** to open a file or directory from the menu
 
 ### Keyboard Shortcuts
 
 | Shortcut | Action |
 |----------|--------|
-| `Cmd+O` | Open file |
-| `Cmd+W` | Close window |
+| `Cmd+O` | Open file / directory |
+| `Cmd+W` | Close tab / window |
+| `Cmd+Shift+]` | Next tab |
+| `Cmd+Shift+[` | Previous tab |
+| `Ctrl+Tab` | Next tab |
 | `Cmd+Q` | Quit |
 
 ## Screenshots
@@ -108,20 +123,22 @@ File changes are detected using GCD's `DispatchSource` file system monitoring, w
 
 ```
 Sources/
-├── MDPreviewCore/           # Core library
-│   ├── MDPreviewApp.swift   # SwiftUI App scene
-│   ├── ContentView.swift    # Main view + drag-and-drop
-│   ├── MarkdownWebView.swift# WKWebView wrapper
-│   ├── MarkdownDocument.swift# File loading + state
-│   ├── FileWatcher.swift    # DispatchSource file monitor
-│   ├── AppDelegate.swift    # Finder integration
+├── MDPreviewCore/            # Core library
+│   ├── MDPreviewApp.swift    # SwiftUI App scene + commands
+│   ├── AppDelegate.swift     # Finder/CLI integration
+│   ├── Workspace.swift       # Tab management + state
+│   ├── MainView.swift        # Layout: sidebar + tabs + preview
+│   ├── FileTree.swift        # Directory tree model + view
+│   ├── MarkdownWebView.swift # WKWebView wrapper
+│   ├── FileWatcher.swift     # DispatchSource file monitor
+│   ├── CLIInstaller.swift    # Command line tool installer
 │   └── Resources/
-│       ├── template.html    # HTML rendering shell
-│       ├── marked.min.js    # Markdown parser (GFM)
-│       ├── highlight.min.js # Syntax highlighting
-│       └── *.css            # GitHub-style themes
+│       ├── template.html     # HTML rendering shell
+│       ├── marked.min.js     # Markdown parser (GFM)
+│       ├── highlight.min.js  # Syntax highlighting
+│       └── *.css             # GitHub-style themes
 └── MDPreview/
-    └── main.swift           # Entry point
+    └── main.swift            # Entry point
 ```
 
 ## Requirements
@@ -137,6 +154,12 @@ Sources/
 ## Contributing
 
 Contributions are welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+
+Please note that this project follows a [Code of Conduct](CODE_OF_CONDUCT.md).
+
+## Security
+
+To report a security vulnerability, please see our [Security Policy](SECURITY.md).
 
 ## Acknowledgments
 

@@ -38,19 +38,21 @@ mdpreview/
 ├── Makefile                   # Build automation
 ├── Sources/
 │   ├── MDPreviewCore/         # Core library (testable)
-│   │   ├── MDPreviewApp.swift
-│   │   ├── AppDelegate.swift
-│   │   ├── ContentView.swift
+│   │   ├── MDPreviewApp.swift # SwiftUI App scene + menu commands
+│   │   ├── AppDelegate.swift  # CLI/Finder integration
+│   │   ├── Workspace.swift    # Tab management + app state
+│   │   ├── MainView.swift     # Layout: sidebar + tabs + preview
+│   │   ├── FileTree.swift     # Directory tree model + view
 │   │   ├── MarkdownWebView.swift
-│   │   ├── MarkdownDocument.swift
 │   │   ├── FileWatcher.swift
+│   │   ├── CLIInstaller.swift # Command line tool installer
 │   │   └── Resources/        # HTML template, JS, CSS
 │   └── MDPreview/
 │       └── main.swift         # Entry point
 ├── Tests/
 │   └── MDPreviewCoreTests/    # Unit and integration tests
 ├── Assets/                    # App icon source files
-├── Supporting/                # Info.plist, entitlements
+├── Supporting/                # Info.plist, entitlements, CLI script
 └── .github/                   # CI/CD workflows, templates
 ```
 

@@ -2,39 +2,45 @@ import SwiftUI
 
 public struct MDPreviewApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
-    @StateObject private var document = MarkdownDocument()
+    @StateObject private var workspace = Workspace()
 
     public init() {}
 
     public var body: some Scene {
         WindowGroup {
-            ContentView(document: document)
+            MainView(workspace: workspace)
+                .frame(minWidth: 500, minHeight: 400)
+                .background(Color(nsColor: .textBackgroundColor))
                 .onAppear {
                     openFromCommandLineArgs()
                 }
                 .onReceive(NotificationCenter.default.publisher(for: .didRequestOpenFile)) { notification in
                     if let url = notification.object as? URL {
-                        document.open(url: url)
+                        workspace.openURL(url)
                     }
                 }
         }
         .commands {
             CommandGroup(replacing: .newItem) {
                 Button("Open...") {
-                    document.showOpenPanel()
+                    workspace.showOpenPanel()
                 }
                 .keyboardShortcut("o", modifiers: .command)
             }
+            CommandGroup(after: .appSettings) {
+                Button("Install Command Line Tool...") {
+                    CLIInstaller.install()
+                }
+            }
         }
-        .defaultSize(width: 800, height: 700)
+        .defaultSize(width: 900, height: 700)
     }
 
     private func openFromCommandLineArgs() {
-        let args = CommandLine.arguments
-        guard args.count > 1 else { return }
-        let path = args[1]
-        // Skip Xcode-injected arguments
-        guard !path.hasPrefix("-") else { return }
-        document.open(path: path)
+        let args = CommandLine.arguments.dropFirst()
+        for arg in args {
+            guard !arg.hasPrefix("-") else { continue }
+            workspace.openFromPath(arg)
+        }
     }
 }
