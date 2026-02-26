@@ -3,11 +3,12 @@
   "checkpoint_id": "65ff89bc036f",
   "strategy": "manual-commit",
   "branch": "main",
-  "checkpoints_count": 3,
+  "checkpoints_count": 4,
   "files_touched": [
     "Sources/MDPreviewCore/MainView.swift",
     "Sources/MDPreviewCore/MarkdownWebView.swift",
-    "Sources/MDPreviewCore/Resources/template.html"
+    "Sources/MDPreviewCore/Resources/template.html",
+    "Supporting/mdpreview"
   ],
   "sessions": [
     {
@@ -16,13 +17,20 @@
       "context": "/65/ff89bc036f/0/context.md",
       "content_hash": "/65/ff89bc036f/0/content_hash.txt",
       "prompt": "/65/ff89bc036f/0/prompt.txt"
+    },
+    {
+      "metadata": "/65/ff89bc036f/1/metadata.json",
+      "transcript": "/65/ff89bc036f/1/full.jsonl",
+      "context": "/65/ff89bc036f/1/context.md",
+      "content_hash": "/65/ff89bc036f/1/content_hash.txt",
+      "prompt": "/65/ff89bc036f/1/prompt.txt"
     }
   ],
   "token_usage": {
-    "input_tokens": 165848,
-    "cache_creation_tokens": 0,
-    "cache_read_tokens": 11553728,
-    "output_tokens": 10769,
-    "api_call_count": 76
+    "input_tokens": 533465,
+    "cache_creation_tokens": 138307,
+    "cache_read_tokens": 39727126,
+    "output_tokens": 138898,
+    "api_call_count": 398
   }
 }
