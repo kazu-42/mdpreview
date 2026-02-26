@@ -21,7 +21,12 @@ public final class Workspace: ObservableObject {
     @Published public var selectedTabID: UUID?
     @Published public var directoryURL: URL?
     @Published public var fileTreeNodes: [FileTreeNode] = []
-    @Published public var markdownContent: String = ""
+    @Published public var markdownContent: String = "" {
+        didSet {
+            tocItems = extractTOC(from: markdownContent)
+        }
+    }
+    @Published public var tocItems: [TOCItem] = []
     @Published public var errorMessage: String?
 
     // Persisted state
@@ -292,6 +297,37 @@ public final class Workspace: ObservableObject {
                 self.errorMessage = "Failed to reload: \(error.localizedDescription)"
             }
         }
+    }
+
+    // MARK: - TOC Extraction
+
+    private func extractTOC(from markdown: String) -> [TOCItem] {
+        var items: [TOCItem] = []
+        let lines = markdown.components(separatedBy: .newlines)
+
+        for line in lines {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+
+            // Match headings: # ## ### etc.
+            if trimmed.hasPrefix("#") {
+                let hashCount = trimmed.prefix(while: { $0 == "#" }).count
+                if hashCount >= 1 && hashCount <= 6 {
+                    let title = trimmed
+                        .dropFirst(hashCount)
+                        .trimmingCharacters(in: .whitespaces)
+
+                    // Create anchor (simple slug)
+                    let anchor = title
+                        .lowercased()
+                        .replacingOccurrences(of: "[^a-z0-9\\-\\s]", with: "", options: .regularExpression)
+                        .replacingOccurrences(of: " ", with: "-")
+
+                    items.append(TOCItem(level: hashCount, title: title, anchor: anchor))
+                }
+            }
+        }
+
+        return items
     }
 }
 

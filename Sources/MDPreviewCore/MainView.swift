@@ -5,6 +5,7 @@ public struct MainView: View {
     @ObservedObject var workspace: Workspace
     @State private var columnVisibility: NavigationSplitViewVisibility = .detailOnly
     @State private var isDragOver = false
+    @State private var showTOC = true
 
     public init(workspace: Workspace) {
         self.workspace = workspace
@@ -24,7 +25,30 @@ public struct MainView: View {
                     }
                 }
         } detail: {
-            contentArea
+            HStack(spacing: 0) {
+                // Main content
+                VStack(spacing: 0) {
+                    if workspace.tabs.count > 1 {
+                        TabBarView(workspace: workspace)
+                    }
+
+                    if workspace.selectedTab != nil {
+                        MarkdownWebView(
+                            markdownContent: workspace.markdownContent,
+                            baseURL: workspace.currentFileDirectory
+                        )
+                    } else {
+                        EmptyStateView()
+                    }
+                }
+
+                // Table of Contents sidebar
+                if showTOC && !workspace.tocItems.isEmpty {
+                    TOCSidebarView(items: workspace.tocItems)
+                        .frame(width: 250)
+                        .background(Color(nsColor: .controlBackgroundColor))
+                }
+            }
         }
         .navigationTitle(workspace.displayName)
         .onChange(of: workspace.directoryURL) { newValue in
@@ -43,38 +67,16 @@ public struct MainView: View {
         } message: {
             Text(workspace.errorMessage ?? "An unknown error occurred")
         }
-    }
-
-    // MARK: - Content Area
-
-    @ViewBuilder
-    private var contentArea: some View {
-        if workspace.tabs.isEmpty {
-            EmptyStateView()
-        } else if workspace.tabs.count == 1 {
-            // Single tab - no tab bar needed
-            MarkdownWebView(
-                markdownContent: workspace.markdownContent,
-                baseURL: workspace.currentFileDirectory
-            )
-        } else {
-            // Multiple tabs - use native TabView
-            TabView(selection: $workspace.selectedTabID) {
-                ForEach(workspace.tabs) { tab in
-                    MarkdownWebView(
-                        markdownContent: workspace.markdownContent,
-                        baseURL: workspace.currentFileDirectory
-                    )
-                    .tabItem {
-                        Label(tab.name, systemImage: "doc.text")
+        .toolbar {
+            ToolbarItem(placement: .automatic) {
+                Button {
+                    withAnimation {
+                        showTOC.toggle()
                     }
-                    .tag(tab.id)
+                } label: {
+                    Image(systemName: showTOC ? "list.bullet.rectangle" : "list.bullet.rectangle")
                 }
-            }
-            .onChange(of: workspace.selectedTabID) { newID in
-                if let id = newID {
-                    workspace.selectTab(id)
-                }
+                .help("Toggle Table of Contents")
             }
         }
     }
@@ -124,4 +126,157 @@ public struct EmptyStateView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
+}
+
+// MARK: - Tab Bar
+
+struct TabBarView: View {
+    @ObservedObject var workspace: Workspace
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 2) {
+                ForEach(workspace.tabs) { tab in
+                    TabBarItem(
+                        tab: tab,
+                        isSelected: tab.id == workspace.selectedTabID,
+                        onSelect: { workspace.selectTab(tab.id) },
+                        onClose: { workspace.closeTab(tab.id) }
+                    )
+                }
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+        }
+        .frame(height: 32)
+        .background(Color(nsColor: .windowBackgroundColor))
+        .overlay(alignment: .bottom) {
+            Divider()
+        }
+    }
+}
+
+struct TabBarItem: View {
+    let tab: TabItem
+    let isSelected: Bool
+    let onSelect: () -> Void
+    let onClose: () -> Void
+    @State private var isHovering = false
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "doc.text")
+                .font(.system(size: 11))
+                .foregroundColor(.secondary)
+
+            Text(tab.name)
+                .font(.system(size: 12))
+                .lineLimit(1)
+                .truncationMode(.tail)
+
+            Button(action: onClose) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 9, weight: .medium))
+                    .foregroundColor(.secondary)
+                    .frame(width: 16, height: 16)
+            }
+            .buttonStyle(.plain)
+            .opacity(isSelected || isHovering ? 1 : 0.4)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .background(
+            RoundedRectangle(cornerRadius: 6)
+                .fill(isSelected ? Color(nsColor: .controlBackgroundColor) : Color.clear)
+        )
+        .contentShape(Rectangle())
+        .onTapGesture(perform: onSelect)
+        .onHover { isHovering = $0 }
+    }
+}
+
+// MARK: - Table of Contents
+
+public struct TOCItem: Identifiable {
+    public let id = UUID()
+    public let level: Int
+    public let title: String
+    public let anchor: String
+
+    public init(level: Int, title: String, anchor: String) {
+        self.level = level
+        self.title = title
+        self.anchor = anchor
+    }
+}
+
+struct TOCSidebarView: View {
+    let items: [TOCItem]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            // Header
+            HStack {
+                Text("Table of Contents")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(.secondary)
+                Spacer()
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(Color(nsColor: .windowBackgroundColor))
+
+            Divider()
+
+            // Content
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 2) {
+                    ForEach(items) { item in
+                        TOCItemView(item: item)
+                    }
+                }
+                .padding(.vertical, 8)
+            }
+        }
+    }
+}
+
+struct TOCItemView: View {
+    let item: TOCItem
+    @State private var isHovering = false
+
+    var body: some View {
+        Button {
+            // Scroll to anchor - would need to communicate with WebView
+            NotificationCenter.default.post(
+                name: .scrollToAnchor,
+                object: item.anchor
+            )
+        } label: {
+            HStack(spacing: 0) {
+                // Indentation based on level
+                ForEach(0..<item.level, id: \.self) { _ in
+                    Text("  ")
+                }
+
+                Text(item.title)
+                    .font(.system(size: 11))
+                    .foregroundColor(isHovering ? .accentColor : .primary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 4)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovering = $0 }
+    }
+}
+
+// MARK: - Notification Names
+
+extension Notification.Name {
+    public static let scrollToAnchor = Notification.Name("com.mdpreview.scrollToAnchor")
 }
