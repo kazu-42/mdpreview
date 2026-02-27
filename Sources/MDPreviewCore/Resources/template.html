@@ -165,7 +165,7 @@
             breaks: false
         });
 
-        function render(markdown, basePath) {
+        function render(markdown, basePath, preserveScroll) {
             // Set base URL for relative path resolution (images, links)
             if (basePath) {
                 var base = document.querySelector('base');
@@ -176,9 +176,13 @@
                 base.href = 'file://' + basePath + '/';
             }
 
-            // Save scroll position
-            var scrollY = window.scrollY;
-            var scrollHeight = document.documentElement.scrollHeight;
+            // Save scroll position only when preserving (same file reload)
+            var scrollY = 0;
+            var scrollHeight = 0;
+            if (preserveScroll) {
+                scrollY = window.scrollY;
+                scrollHeight = document.documentElement.scrollHeight;
+            }
 
             var html = marked.parse(markdown || '');
             document.getElementById('content').innerHTML = html;
@@ -196,11 +200,13 @@
                 hljs.highlightElement(block);
             });
 
-            // Restore scroll position (adjust if content height changed)
-            var newScrollHeight = document.documentElement.scrollHeight;
-            if (scrollHeight > 0 && scrollY > 0) {
+            // Restore scroll position for same-file reload, reset for tab switch
+            if (preserveScroll && scrollHeight > 0 && scrollY > 0) {
+                var newScrollHeight = document.documentElement.scrollHeight;
                 var ratio = scrollY / scrollHeight;
                 window.scrollTo(0, ratio * newScrollHeight);
+            } else if (!preserveScroll) {
+                window.scrollTo(0, 0);
             }
         }
 

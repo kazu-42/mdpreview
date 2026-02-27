@@ -19,8 +19,8 @@ final class MarkdownRenderingTests: XCTestCase {
             Bundle.module.url(forResource: "template", withExtension: "html", subdirectory: "Resources")
         )
         let content = try String(contentsOf: url, encoding: .utf8)
-        XCTAssertTrue(content.contains("function render(markdown, basePath)"),
-            "template.html should contain the render(markdown, basePath) function")
+        XCTAssertTrue(content.contains("function render(markdown, basePath, preserveScroll)"),
+            "template.html should contain the render(markdown, basePath, preserveScroll) function")
     }
 
     func testTemplateHTMLContainsBaseTagHandling() throws {

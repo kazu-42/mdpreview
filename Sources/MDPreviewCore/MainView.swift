@@ -35,7 +35,8 @@ public struct MainView: View {
                     if workspace.selectedTab != nil {
                         MarkdownWebView(
                             markdownContent: workspace.markdownContent,
-                            baseURL: workspace.currentFileDirectory
+                            baseURL: workspace.currentFileDirectory,
+                            contentID: workspace.selectedTabID
                         )
                     } else {
                         EmptyStateView()

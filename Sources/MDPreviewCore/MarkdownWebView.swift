@@ -4,10 +4,12 @@ import WebKit
 public struct MarkdownWebView: NSViewRepresentable {
     public let markdownContent: String
     public let baseURL: URL?
+    public let contentID: UUID?
 
-    public init(markdownContent: String, baseURL: URL? = nil) {
+    public init(markdownContent: String, baseURL: URL? = nil, contentID: UUID? = nil) {
         self.markdownContent = markdownContent
         self.baseURL = baseURL
+        self.contentID = contentID
     }
 
     public func makeCoordinator() -> Coordinator {
@@ -33,16 +35,24 @@ public struct MarkdownWebView: NSViewRepresentable {
     }
 
     public func updateNSView(_ webView: WKWebView, context: Context) {
-        // Update base URL if changed
+        let tabChanged = context.coordinator.currentContentID != contentID
+        context.coordinator.currentContentID = contentID
+
+        // If base URL changed, reload template
         if context.coordinator.baseURL != baseURL {
             context.coordinator.baseURL = baseURL
+            context.coordinator.isLoaded = false
+            context.coordinator.pendingContent = markdownContent
+            context.coordinator.pendingPreserveScroll = false
             loadTemplate(into: webView, baseURL: baseURL)
+            return
         }
 
         if context.coordinator.isLoaded {
-            evaluateRender(webView: webView, content: markdownContent, baseURL: baseURL)
+            evaluateRender(webView: webView, content: markdownContent, baseURL: baseURL, preserveScroll: !tabChanged)
         } else {
             context.coordinator.pendingContent = markdownContent
+            context.coordinator.pendingPreserveScroll = !tabChanged
         }
     }
 
@@ -108,7 +118,7 @@ public struct MarkdownWebView: NSViewRepresentable {
         return nil
     }
 
-    private func evaluateRender(webView: WKWebView, content: String, baseURL: URL? = nil) {
+    private func evaluateRender(webView: WKWebView, content: String, baseURL: URL? = nil, preserveScroll: Bool = true) {
         var processedContent = content
 
         // Convert relative image paths to absolute file URLs
@@ -118,7 +128,7 @@ public struct MarkdownWebView: NSViewRepresentable {
 
         let escaped = MarkdownWebView.escapeForJavaScript(processedContent)
         let basePath = baseURL?.path ?? ""
-        webView.evaluateJavaScript("render(`\(escaped)`, `\(basePath)`)")
+        webView.evaluateJavaScript("render(`\(escaped)`, `\(basePath)`, \(preserveScroll))")
     }
 
     /// Rewrite relative image and link paths to absolute file URLs
@@ -192,7 +202,9 @@ public struct MarkdownWebView: NSViewRepresentable {
         public var webView: WKWebView?
         public var isLoaded = false
         public var pendingContent: String?
+        public var pendingPreserveScroll = true
         public var baseURL: URL?
+        public var currentContentID: UUID?
         private var scrollObserver: NSObjectProtocol?
 
         override init() {
@@ -224,7 +236,9 @@ public struct MarkdownWebView: NSViewRepresentable {
             AppLogger.shared.log("WebView finished loading")
             isLoaded = true
             if let content = pendingContent {
+                let preserveScroll = pendingPreserveScroll
                 pendingContent = nil
+                pendingPreserveScroll = true
                 // Convert relative paths to absolute file URLs
                 var processedContent = content
                 if let base = baseURL {
@@ -232,7 +246,7 @@ public struct MarkdownWebView: NSViewRepresentable {
                 }
                 let escaped = MarkdownWebView.escapeForJavaScript(processedContent)
                 let basePath = baseURL?.path ?? ""
-                webView.evaluateJavaScript("render(`\(escaped)`, `\(basePath)`)")
+                webView.evaluateJavaScript("render(`\(escaped)`, `\(basePath)`, \(preserveScroll))")
             }
         }
 

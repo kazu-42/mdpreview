@@ -274,15 +274,19 @@ public final class Workspace: ObservableObject {
 
         // Load large files asynchronously
         if fileSize > 1_000_000 { // > 1MB
+            let expectedTabID = tab.id
             DispatchQueue.global(qos: .userInitiated).async { [weak self] in
                 do {
                     let content = try String(contentsOf: tab.url, encoding: .utf8)
                     DispatchQueue.main.async {
+                        // Only update if still on the same tab (avoid race condition)
+                        guard self?.selectedTabID == expectedTabID else { return }
                         self?.markdownContent = content
                         self?.errorMessage = nil
                     }
                 } catch {
                     DispatchQueue.main.async {
+                        guard self?.selectedTabID == expectedTabID else { return }
                         self?.errorMessage = "Failed to load \(tab.name): \(error.localizedDescription)"
                     }
                 }
@@ -322,9 +326,18 @@ public final class Workspace: ObservableObject {
     private func extractTOC(from markdown: String) -> [TOCItem] {
         var items: [TOCItem] = []
         let lines = markdown.components(separatedBy: .newlines)
+        var inCodeBlock = false
 
         for line in lines {
             let trimmed = line.trimmingCharacters(in: .whitespaces)
+
+            // Track fenced code blocks
+            if trimmed.hasPrefix("```") || trimmed.hasPrefix("~~~") {
+                inCodeBlock = !inCodeBlock
+                continue
+            }
+
+            guard !inCodeBlock else { continue }
 
             // Match headings: # ## ### etc.
             if trimmed.hasPrefix("#") {
@@ -333,6 +346,8 @@ public final class Workspace: ObservableObject {
                     let title = trimmed
                         .dropFirst(hashCount)
                         .trimmingCharacters(in: .whitespaces)
+
+                    guard !title.isEmpty else { continue }
 
                     // Create anchor (simple slug)
                     let anchor = title
