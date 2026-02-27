@@ -114,6 +114,92 @@ final class MarkdownRenderingTests: XCTestCase {
         XCTAssertTrue(content.contains("highlight.min.js"), "Should reference highlight.min.js")
     }
 
+    // MARK: - KaTeX and Mermaid bundled files
+
+    func testKaTeXMinJSExistsInBundle() {
+        let url = Bundle.module.url(
+            forResource: "katex.min",
+            withExtension: "js",
+            subdirectory: "Resources"
+        )
+        XCTAssertNotNil(url, "katex.min.js should be bundled in Resources")
+    }
+
+    func testKaTeXMinCSSExistsInBundle() {
+        let url = Bundle.module.url(
+            forResource: "katex.min",
+            withExtension: "css",
+            subdirectory: "Resources"
+        )
+        XCTAssertNotNil(url, "katex.min.css should be bundled in Resources")
+    }
+
+    func testAutoRenderMinJSExistsInBundle() {
+        let url = Bundle.module.url(
+            forResource: "auto-render.min",
+            withExtension: "js",
+            subdirectory: "Resources"
+        )
+        XCTAssertNotNil(url, "auto-render.min.js should be bundled in Resources")
+    }
+
+    func testMermaidMinJSExistsInBundle() {
+        let url = Bundle.module.url(
+            forResource: "mermaid.min",
+            withExtension: "js",
+            subdirectory: "Resources"
+        )
+        XCTAssertNotNil(url, "mermaid.min.js should be bundled in Resources")
+    }
+
+    func testTemplateHTMLContainsKaTeX() throws {
+        let url = try XCTUnwrap(
+            Bundle.module.url(forResource: "template", withExtension: "html", subdirectory: "Resources")
+        )
+        let content = try String(contentsOf: url, encoding: .utf8)
+        XCTAssertTrue(content.contains("katex.min.js"), "template.html should reference katex.min.js")
+        XCTAssertTrue(content.contains("katex.min.css"), "template.html should reference katex.min.css")
+        XCTAssertTrue(content.contains("renderMathInElement"), "template.html should call renderMathInElement")
+    }
+
+    func testTemplateHTMLContainsMermaid() throws {
+        let url = try XCTUnwrap(
+            Bundle.module.url(forResource: "template", withExtension: "html", subdirectory: "Resources")
+        )
+        let content = try String(contentsOf: url, encoding: .utf8)
+        XCTAssertTrue(content.contains("mermaid.min.js"), "template.html should reference mermaid.min.js")
+        XCTAssertTrue(content.contains("mermaid.initialize"), "template.html should call mermaid.initialize")
+    }
+
+    func testTemplateHTMLContainsAnchorClickInterceptor() throws {
+        let url = try XCTUnwrap(
+            Bundle.module.url(forResource: "template", withExtension: "html", subdirectory: "Resources")
+        )
+        let content = try String(contentsOf: url, encoding: .utf8)
+        XCTAssertTrue(content.contains("href.startsWith('#')"),
+            "template.html should intercept same-page anchor clicks")
+    }
+
+    func testTemplateHTMLContainsBrokenLinkFunction() throws {
+        let url = try XCTUnwrap(
+            Bundle.module.url(forResource: "template", withExtension: "html", subdirectory: "Resources")
+        )
+        let content = try String(contentsOf: url, encoding: .utf8)
+        XCTAssertTrue(content.contains("function markBrokenLinks"),
+            "template.html should define markBrokenLinks function")
+        XCTAssertTrue(content.contains("broken-link"),
+            "template.html should define broken-link CSS class")
+    }
+
+    func testTemplateHTMLContainsCustomCSSFunction() throws {
+        let url = try XCTUnwrap(
+            Bundle.module.url(forResource: "template", withExtension: "html", subdirectory: "Resources")
+        )
+        let content = try String(contentsOf: url, encoding: .utf8)
+        XCTAssertTrue(content.contains("function applyCustomCSS"),
+            "template.html should define applyCustomCSS function")
+    }
+
     // MARK: - JavaScript escaping
 
     func testEscapeForJavaScriptBackslash() {

@@ -5,8 +5,12 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <link rel="stylesheet" href="github.min.css" media="(prefers-color-scheme: light)">
     <link rel="stylesheet" href="github-dark.min.css" media="(prefers-color-scheme: dark)">
+    <link rel="stylesheet" href="katex.min.css">
     <script src="marked.min.js"></script>
     <script src="highlight.min.js"></script>
+    <script src="katex.min.js"></script>
+    <script src="auto-render.min.js"></script>
+    <script src="mermaid.min.js"></script>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
 
@@ -155,6 +159,19 @@
         #content {
             min-height: 100vh;
         }
+
+        /* KaTeX: inherit document color in both modes */
+        .katex { color: inherit; }
+
+        /* Mermaid diagrams */
+        .mermaid { text-align: center; margin: 16px 0; }
+
+        /* Broken links */
+        a.broken-link {
+            text-decoration: underline wavy #d1242f;
+            cursor: not-allowed;
+            opacity: 0.7;
+        }
     </style>
 </head>
 <body>
@@ -164,6 +181,18 @@
             gfm: true,
             breaks: false
         });
+
+        // Intercept same-page anchor clicks before WebView can navigate away
+        document.addEventListener('click', function(e) {
+            var target = e.target;
+            while (target && target.tagName !== 'A') target = target.parentElement;
+            if (!target) return;
+            var href = target.getAttribute('href');
+            if (href && href.startsWith('#')) {
+                e.preventDefault();
+                scrollToAnchor(href.slice(1));
+            }
+        }, true);
 
         function render(markdown, basePath, preserveScroll) {
             // Set base URL for relative path resolution (images, links)
@@ -195,10 +224,40 @@
                 heading.id = slug;
             });
 
-            // Apply syntax highlighting to code blocks
-            document.querySelectorAll('pre code').forEach(function(block) {
+            // Apply syntax highlighting to code blocks (skip mermaid)
+            document.querySelectorAll('pre code:not(.language-mermaid)').forEach(function(block) {
                 hljs.highlightElement(block);
             });
+
+            // KaTeX math rendering
+            renderMathInElement(document.getElementById('content'), {
+                delimiters: [
+                    {left: '$$', right: '$$', display: true},
+                    {left: '$', right: '$', display: false},
+                    {left: '\\(', right: '\\)', display: false},
+                    {left: '\\[', right: '\\]', display: true}
+                ],
+                throwOnError: false
+            });
+
+            // Mermaid diagram rendering
+            var isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+            mermaid.initialize({
+                startOnLoad: false,
+                theme: isDark ? 'dark' : 'default',
+                securityLevel: 'loose'
+            });
+            var mermaidBlocks = document.querySelectorAll('pre code.language-mermaid');
+            mermaidBlocks.forEach(function(block) {
+                var pre = block.parentElement;
+                var div = document.createElement('div');
+                div.className = 'mermaid';
+                div.textContent = block.textContent;
+                pre.parentNode.replaceChild(div, pre);
+            });
+            if (mermaidBlocks.length > 0) {
+                mermaid.run({ nodes: document.querySelectorAll('.mermaid') });
+            }
 
             // Restore scroll position for same-file reload, reset for tab switch
             if (preserveScroll && scrollHeight > 0 && scrollY > 0) {
@@ -215,6 +274,27 @@
             if (element) {
                 element.scrollIntoView({ behavior: 'smooth', block: 'start' });
             }
+        }
+
+        function markBrokenLinks(brokenURLs) {
+            document.querySelectorAll('#content a').forEach(function(link) {
+                var href = link.getAttribute('href');
+                if (!href) return;
+                if (brokenURLs.indexOf(href) !== -1) {
+                    link.classList.add('broken-link');
+                    link.title = 'File not found: ' + href;
+                }
+            });
+        }
+
+        function applyCustomCSS(css) {
+            var style = document.getElementById('custom-css');
+            if (!style) {
+                style = document.createElement('style');
+                style.id = 'custom-css';
+                document.head.appendChild(style);
+            }
+            style.textContent = css;
         }
     </script>
 </body>

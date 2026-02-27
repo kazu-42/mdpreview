@@ -5,11 +5,13 @@ public struct MarkdownWebView: NSViewRepresentable {
     public let markdownContent: String
     public let baseURL: URL?
     public let contentID: UUID?
+    public let customCSS: String
 
-    public init(markdownContent: String, baseURL: URL? = nil, contentID: UUID? = nil) {
+    public init(markdownContent: String, baseURL: URL? = nil, contentID: UUID? = nil, customCSS: String = "") {
         self.markdownContent = markdownContent
         self.baseURL = baseURL
         self.contentID = contentID
+        self.customCSS = customCSS
     }
 
     public func makeCoordinator() -> Coordinator {
@@ -28,6 +30,7 @@ public struct MarkdownWebView: NSViewRepresentable {
 
         context.coordinator.webView = webView
         context.coordinator.pendingContent = markdownContent
+        context.coordinator.pendingCSS = customCSS
         context.coordinator.baseURL = baseURL
         loadTemplate(into: webView, baseURL: baseURL)
 
@@ -44,15 +47,21 @@ public struct MarkdownWebView: NSViewRepresentable {
             context.coordinator.isLoaded = false
             context.coordinator.pendingContent = markdownContent
             context.coordinator.pendingPreserveScroll = false
+            context.coordinator.pendingCSS = customCSS
             loadTemplate(into: webView, baseURL: baseURL)
             return
         }
 
         if context.coordinator.isLoaded {
             evaluateRender(webView: webView, content: markdownContent, baseURL: baseURL, preserveScroll: !tabChanged)
+            if context.coordinator.currentCustomCSS != customCSS {
+                context.coordinator.currentCustomCSS = customCSS
+                evaluateApplyCustomCSS(webView: webView, css: customCSS)
+            }
         } else {
             context.coordinator.pendingContent = markdownContent
             context.coordinator.pendingPreserveScroll = !tabChanged
+            context.coordinator.pendingCSS = customCSS
         }
     }
 
@@ -129,6 +138,23 @@ public struct MarkdownWebView: NSViewRepresentable {
         let escaped = MarkdownWebView.escapeForJavaScript(processedContent)
         let basePath = baseURL?.path ?? ""
         webView.evaluateJavaScript("render(`\(escaped)`, `\(basePath)`, \(preserveScroll))")
+
+        // Mark broken links using the original (non-rewritten) content
+        if let base = baseURL {
+            let brokenPaths = MarkdownWebView.extractLocalLinks(in: content, baseURL: base)
+            let brokenAbsoluteURLs = brokenPaths.map { "file://\(base.path)/\($0)" }
+            if let jsonData = try? JSONEncoder().encode(brokenAbsoluteURLs),
+               let jsonString = String(data: jsonData, encoding: .utf8) {
+                webView.evaluateJavaScript("markBrokenLinks(\(jsonString))")
+            }
+        }
+    }
+
+    private func evaluateApplyCustomCSS(webView: WKWebView, css: String) {
+        let escaped = css
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "`", with: "\\`")
+        webView.evaluateJavaScript("applyCustomCSS(`\(escaped)`)")
     }
 
     /// Rewrite relative image and link paths to absolute file URLs
@@ -198,11 +224,54 @@ public struct MarkdownWebView: NSViewRepresentable {
             .replacingOccurrences(of: "\r", with: "\\n")
     }
 
+    /// Extract local file links from markdown and return paths to files that don't exist.
+    /// Uses original (non-rewritten) markdown content.
+    public static func extractLocalLinks(in markdown: String, baseURL: URL) -> [String] {
+        // Match [text](path) links, excluding images (preceded by !)
+        let pattern = #"(?<!!)\[[^\]]*\]\(([^)#:\s][^)]*)\)"#
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return [] }
+        let range = NSRange(markdown.startIndex..., in: markdown)
+        var brokenPaths: [String] = []
+
+        for match in regex.matches(in: markdown, range: range) {
+            guard match.numberOfRanges >= 2,
+                  let pathRange = Range(match.range(at: 1), in: markdown) else { continue }
+            var path = String(markdown[pathRange])
+
+            // Skip external URLs
+            if path.hasPrefix("http://") || path.hasPrefix("https://") ||
+               path.hasPrefix("file://") || path.hasPrefix("//") { continue }
+            // Skip absolute paths
+            if path.hasPrefix("/") { continue }
+            // Skip data URIs
+            if path.hasPrefix("data:") { continue }
+
+            // Strip fragment if present
+            if let hashIdx = path.firstIndex(of: "#") {
+                path = String(path[..<hashIdx])
+            }
+            if path.isEmpty { continue }
+
+            // Remove leading ./
+            if path.hasPrefix("./") { path = String(path.dropFirst(2)) }
+
+            // Check if file exists relative to base URL
+            let fullURL = baseURL.appendingPathComponent(path)
+            if !FileManager.default.fileExists(atPath: fullURL.path) {
+                brokenPaths.append(path)
+            }
+        }
+
+        return brokenPaths
+    }
+
     public final class Coordinator: NSObject, WKNavigationDelegate {
         public var webView: WKWebView?
         public var isLoaded = false
         public var pendingContent: String?
         public var pendingPreserveScroll = true
+        public var pendingCSS: String = ""
+        public var currentCustomCSS: String = ""
         public var baseURL: URL?
         public var currentContentID: UUID?
         private var scrollObserver: NSObjectProtocol?
@@ -228,7 +297,10 @@ public struct MarkdownWebView: NSViewRepresentable {
 
         private func scrollToAnchor(_ anchor: String) {
             guard let webView = webView else { return }
-            let escapedAnchor = anchor.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? anchor
+            // Escape for JS single-quoted string (don't percent-encode; IDs use slugified text)
+            let escapedAnchor = anchor
+                .replacingOccurrences(of: "\\", with: "\\\\")
+                .replacingOccurrences(of: "'", with: "\\'")
             webView.evaluateJavaScript("scrollToAnchor('\(escapedAnchor)')")
         }
 
@@ -237,8 +309,10 @@ public struct MarkdownWebView: NSViewRepresentable {
             isLoaded = true
             if let content = pendingContent {
                 let preserveScroll = pendingPreserveScroll
+                let css = pendingCSS
                 pendingContent = nil
                 pendingPreserveScroll = true
+
                 // Convert relative paths to absolute file URLs
                 var processedContent = content
                 if let base = baseURL {
@@ -247,6 +321,23 @@ public struct MarkdownWebView: NSViewRepresentable {
                 let escaped = MarkdownWebView.escapeForJavaScript(processedContent)
                 let basePath = baseURL?.path ?? ""
                 webView.evaluateJavaScript("render(`\(escaped)`, `\(basePath)`, \(preserveScroll))")
+
+                // Apply custom CSS
+                currentCustomCSS = css
+                let escapedCSS = css
+                    .replacingOccurrences(of: "\\", with: "\\\\")
+                    .replacingOccurrences(of: "`", with: "\\`")
+                webView.evaluateJavaScript("applyCustomCSS(`\(escapedCSS)`)")
+
+                // Mark broken links using original (non-rewritten) content
+                if let base = baseURL {
+                    let brokenPaths = MarkdownWebView.extractLocalLinks(in: content, baseURL: base)
+                    let brokenAbsoluteURLs = brokenPaths.map { "file://\(base.path)/\($0)" }
+                    if let jsonData = try? JSONEncoder().encode(brokenAbsoluteURLs),
+                       let jsonString = String(data: jsonData, encoding: .utf8) {
+                        webView.evaluateJavaScript("markBrokenLinks(\(jsonString))")
+                    }
+                }
             }
         }
 
@@ -267,9 +358,16 @@ public struct MarkdownWebView: NSViewRepresentable {
             if navigationAction.navigationType == .linkActivated,
                let url = navigationAction.request.url {
 
-                // Markdown files: open in app (new tab)
+                // Markdown files: open in app (new tab), passing fragment if present
                 if url.isFileURL && isMarkdownFile(url) {
-                    NotificationCenter.default.post(name: .didRequestOpenFile, object: url)
+                    let fragment = url.fragment
+                    // Create file URL without the fragment
+                    let fileURL = URL(fileURLWithPath: url.path)
+                    var userInfo: [AnyHashable: Any]? = nil
+                    if let fragment = fragment {
+                        userInfo = ["fragment": fragment]
+                    }
+                    NotificationCenter.default.post(name: .didRequestOpenFile, object: fileURL, userInfo: userInfo)
                     decisionHandler(.cancel)
                     return
                 }

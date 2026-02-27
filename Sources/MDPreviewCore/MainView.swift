@@ -36,7 +36,8 @@ public struct MainView: View {
                         MarkdownWebView(
                             markdownContent: workspace.markdownContent,
                             baseURL: workspace.currentFileDirectory,
-                            contentID: workspace.selectedTabID
+                            contentID: workspace.selectedTabID,
+                            customCSS: workspace.customCSS
                         )
                     } else {
                         EmptyStateView()

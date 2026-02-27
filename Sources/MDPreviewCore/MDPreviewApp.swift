@@ -50,6 +50,12 @@ private struct WindowRoot: View {
                 guard hostWindow?.isKeyWindow == true,
                       let url = notification.object as? URL else { return }
                 workspace.openURL(url)
+                // If the link included a fragment (#section), scroll to anchor after content loads
+                if let fragment = notification.userInfo?["fragment"] as? String {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                        NotificationCenter.default.post(name: .scrollToAnchor, object: fragment)
+                    }
+                }
             }
     }
 
@@ -151,6 +157,17 @@ private struct AppCommands: Commands {
                 set: { workspace?.showHiddenFiles = $0 }
             ))
             .keyboardShortcut(".", modifiers: [.command, .shift])
+
+            Divider()
+
+            Button("Custom Stylesheet...") {
+                chooseCustomStylesheet()
+            }
+
+            Button("Remove Custom Stylesheet") {
+                workspace?.setCustomCSSPath("")
+            }
+            .disabled(workspace?.customCSSPath.isEmpty ?? true)
         }
 
         // MARK: Window Menu
@@ -204,6 +221,17 @@ private struct AppCommands: Commands {
                     NSWorkspace.shared.open(url)
                 }
             }
+        }
+    }
+
+    private func chooseCustomStylesheet() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [UTType(filenameExtension: "css")].compactMap { $0 }
+        panel.message = "Select a CSS file to use as a custom stylesheet"
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        if panel.runModal() == .OK, let url = panel.url {
+            workspace?.setCustomCSSPath(url.path)
         }
     }
 

@@ -40,11 +40,20 @@ public final class Workspace: ObservableObject {
     @AppStorage("lastOpenedFiles") private var lastOpenedFilesData: Data = Data()
     @AppStorage("lastDirectory") private var lastDirectoryPath: String = ""
     @AppStorage("showHiddenFiles") private var storedShowHiddenFiles: Bool = true
+    @AppStorage("customCSSPath") private var storedCustomCSSPath: String = ""
 
     /// Whether to show hidden files in the file tree
     @Published public var showHiddenFiles: Bool = true {
         didSet { refreshFileTree() }
     }
+
+    /// Custom CSS content loaded from customCSSPath
+    @Published public var customCSS: String = ""
+
+    /// Path to the current custom CSS file (read-only; use setCustomCSSPath to change)
+    public var customCSSPath: String { storedCustomCSSPath }
+
+    private let cssWatcher = FileWatcher()
 
     /// Computed property for showing error alerts
     public var showError: Bool {
@@ -61,6 +70,9 @@ public final class Workspace: ObservableObject {
 
     public init() {
         showHiddenFiles = storedShowHiddenFiles
+        if !storedCustomCSSPath.isEmpty {
+            loadCustomCSSFromPath(storedCustomCSSPath)
+        }
     }
 
     // MARK: - Computed Properties
@@ -210,6 +222,18 @@ public final class Workspace: ObservableObject {
         storedShowHiddenFiles = showHiddenFiles
     }
 
+    /// Set a new custom CSS file path and reload the CSS content.
+    /// Pass empty string to remove the custom stylesheet.
+    public func setCustomCSSPath(_ path: String) {
+        storedCustomCSSPath = path
+        cssWatcher.stop()
+        if path.isEmpty {
+            customCSS = ""
+            return
+        }
+        loadCustomCSSFromPath(path)
+    }
+
     public func refreshFileTree() {
         guard let dir = directoryURL else { return }
         fileTreeNodes = FileTreeNode.buildTree(from: dir, showHidden: showHiddenFiles)
@@ -312,6 +336,23 @@ public final class Workspace: ObservableObject {
         fileWatcher.watch(url: tab.url) { [weak self] in
             self?.reloadCurrentTab()
         }
+    }
+
+    private func loadCustomCSSFromPath(_ path: String) {
+        let url = URL(fileURLWithPath: path)
+        guard FileManager.default.isReadableFile(atPath: url.path),
+              let css = try? String(contentsOf: url, encoding: .utf8) else { return }
+        customCSS = css
+        cssWatcher.watch(url: url) { [weak self] in
+            self?.reloadCustomCSS()
+        }
+    }
+
+    private func reloadCustomCSS() {
+        guard !storedCustomCSSPath.isEmpty else { return }
+        let url = URL(fileURLWithPath: storedCustomCSSPath)
+        guard let css = try? String(contentsOf: url, encoding: .utf8) else { return }
+        DispatchQueue.main.async { self.customCSS = css }
     }
 
     private func reloadCurrentTab() {
