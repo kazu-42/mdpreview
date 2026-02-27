@@ -57,6 +57,18 @@ private struct WindowRoot: View {
                     }
                 }
             }
+            .onReceive(NotificationCenter.default.publisher(for: .closeCurrentTab)) { _ in
+                guard hostWindow?.isKeyWindow == true else { return }
+                if workspace.tabs.isEmpty {
+                    hostWindow?.close()
+                } else {
+                    workspace.closeCurrentTab()
+                }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .closeAllTabs)) { _ in
+                guard hostWindow?.isKeyWindow == true else { return }
+                workspace.closeAllTabs()
+            }
     }
 
     private func initializeIfFirstWindow() {
@@ -192,12 +204,10 @@ private struct AppCommands: Commands {
                     NSApp.keyWindow?.close()
                 }
             }
-            .keyboardShortcut("w", modifiers: .command)
 
             Button("Close All Tabs") {
                 workspace?.closeAllTabs()
             }
-            .keyboardShortcut("w", modifiers: [.command, .option])
 
             Divider()
 
