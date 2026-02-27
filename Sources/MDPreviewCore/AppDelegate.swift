@@ -15,6 +15,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
         installCloseTabKeyHandler()
+        installMenuShortcutFixer()
     }
 
     // Intercept Cmd+W and Cmd+Opt+W before the menu system sees them.
@@ -33,6 +34,40 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
                 return nil
             }
             return event
+        }
+    }
+
+    // SwiftUI cannot show ⌘W on "Close Tab" because the system Close item
+    // already occupies that shortcut. We patch the NSMenuItems directly and
+    // reapply whenever the menu changes (SwiftUI rebuilds on workspace state changes).
+    private func installMenuShortcutFixer() {
+        DispatchQueue.main.async { self.applyCloseTabShortcutHints() }
+        NotificationCenter.default.addObserver(
+            forName: NSMenu.didChangeItemNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.applyCloseTabShortcutHints()
+        }
+    }
+
+    private func applyCloseTabShortcutHints() {
+        guard let windowMenu = NSApp.mainMenu?.item(withTitle: "Window")?.submenu else { return }
+        for item in windowMenu.items {
+            switch item.title {
+            case "Close Tab":
+                if item.keyEquivalent != "w" {
+                    item.keyEquivalent = "w"
+                    item.keyEquivalentModifierMask = .command
+                }
+            case "Close All Tabs":
+                if item.keyEquivalent != "w" {
+                    item.keyEquivalent = "w"
+                    item.keyEquivalentModifierMask = [.command, .option]
+                }
+            default:
+                break
+            }
         }
     }
 

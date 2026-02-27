@@ -67,7 +67,11 @@ private struct WindowRoot: View {
             }
             .onReceive(NotificationCenter.default.publisher(for: .closeAllTabs)) { _ in
                 guard hostWindow?.isKeyWindow == true else { return }
-                workspace.closeAllTabs()
+                if workspace.tabs.isEmpty {
+                    hostWindow?.close()
+                } else {
+                    workspace.closeAllTabs()
+                }
             }
     }
 
@@ -208,6 +212,7 @@ private struct AppCommands: Commands {
             Button("Close All Tabs") {
                 workspace?.closeAllTabs()
             }
+            .disabled(workspace?.tabs.isEmpty ?? true)
 
             Divider()
 
@@ -215,11 +220,13 @@ private struct AppCommands: Commands {
                 workspace?.selectNextTab()
             }
             .keyboardShortcut("]", modifiers: [.command, .shift])
+            .disabled((workspace?.tabs.count ?? 0) <= 1)
 
             Button("Previous Tab") {
                 workspace?.selectPreviousTab()
             }
             .keyboardShortcut("[", modifiers: [.command, .shift])
+            .disabled((workspace?.tabs.count ?? 0) <= 1)
 
             Divider()
 
@@ -228,6 +235,7 @@ private struct AppCommands: Commands {
                     workspace?.selectTab(at: index - 1)
                 }
                 .keyboardShortcut(KeyEquivalent(Character("\(index)")), modifiers: .command)
+                .disabled((workspace?.tabs.count ?? 0) < index)
             }
         }
 
