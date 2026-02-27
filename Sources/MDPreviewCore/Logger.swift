@@ -57,6 +57,10 @@ public final class AppLogger {
 
     /// Export logs to a user-specified location
     public func exportLogs(to url: URL) throws {
+        // Remove existing file if present (NSSavePanel may confirm overwrite)
+        if FileManager.default.fileExists(atPath: url.path) {
+            try FileManager.default.removeItem(at: url)
+        }
         try FileManager.default.copyItem(at: logFileURL, to: url)
     }
 

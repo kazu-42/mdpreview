@@ -80,13 +80,10 @@ public struct MarkdownWebView: NSViewRepresentable {
 
         AppLogger.shared.log("Using template: \(resourceURL.path)")
 
-        // Use the markdown file's directory as base URL for resolving relative paths
-        let readAccessURL: URL
-        if let base = baseURL {
-            readAccessURL = base
-        } else {
-            readAccessURL = resourceURL.deletingLastPathComponent()
-        }
+        // Grant WKWebView read access to both the bundle resources (CSS/JS) and
+        // the markdown file's directory (for relative image paths).
+        // Use root filesystem as the access scope since we need both locations.
+        let readAccessURL = URL(fileURLWithPath: "/")
 
         webView.loadFileURL(resourceURL, allowingReadAccessTo: readAccessURL)
     }
