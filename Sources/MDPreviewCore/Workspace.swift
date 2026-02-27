@@ -15,6 +15,12 @@ public struct TabItem: Identifiable, Equatable {
 }
 
 public final class Workspace: ObservableObject {
+    // MARK: - Configuration
+
+    /// When true, this workspace saves and restores session state (open files/directories).
+    /// Only the first window's workspace should have this set to true.
+    public var persistsState = false
+
     // MARK: - Published State
 
     @Published public var tabs: [TabItem] = []
@@ -212,6 +218,7 @@ public final class Workspace: ObservableObject {
     // MARK: - State Persistence
 
     public func saveState() {
+        guard persistsState else { return }
         // Save open file paths
         let paths = tabs.map { $0.url.path }
         if let data = try? JSONEncoder().encode(paths) {
@@ -220,6 +227,7 @@ public final class Workspace: ObservableObject {
     }
 
     public func restoreState() {
+        guard persistsState else { return }
         // Restore last directory
         if !lastDirectoryPath.isEmpty {
             let url = URL(fileURLWithPath: lastDirectoryPath)

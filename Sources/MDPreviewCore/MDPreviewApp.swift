@@ -1,117 +1,64 @@
 import SwiftUI
+import AppKit
 import UniformTypeIdentifiers
+
+// MARK: - First Window Initialization State
+
+private final class AppInitState {
+    static let shared = AppInitState()
+    private(set) var firstWindowInitialized = false
+
+    func markFirstWindowInitialized() {
+        firstWindowInitialized = true
+    }
+}
+
+// MARK: - App Entry Point
 
 public struct MDPreviewApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
-    @StateObject private var workspace = Workspace()
 
     public init() {}
 
     public var body: some Scene {
-        WindowGroup {
-            MainView(workspace: workspace)
-                .frame(minWidth: 500, minHeight: 400)
-                .background(Color(nsColor: .textBackgroundColor))
-                .onAppear {
-                    openFromCommandLineArgs()
-                    restoreStateIfNeeded()
-                }
-                .onReceive(NotificationCenter.default.publisher(for: .didRequestOpenFile)) { notification in
-                    if let url = notification.object as? URL {
-                        workspace.openURL(url)
-                    }
-                }
+        WindowGroup(id: "main") {
+            WindowRoot()
         }
         .commands {
-            // MARK: - File Menu
-            CommandGroup(replacing: .newItem) {
-                Button("Open...") {
-                    workspace.showOpenPanel()
-                }
-                .keyboardShortcut("o", modifiers: .command)
-            }
-
-            CommandGroup(after: .saveItem) {
-                Button("Export Logs...") {
-                    exportLogs()
-                }
-            }
-
-            CommandGroup(after: .appSettings) {
-                Button("Install Command Line Tool...") {
-                    CLIInstaller.install()
-                }
-            }
-
-            // MARK: - View Menu (extend default View menu)
-            CommandGroup(after: .toolbar) {
-                Button("Toggle Sidebar") {
-                    workspace.toggleSidebar()
-                }
-                .keyboardShortcut("s", modifiers: [.command, .control])
-
-                Button("Toggle Table of Contents") {
-                    NotificationCenter.default.post(name: .toggleTOC, object: nil)
-                }
-                .keyboardShortcut("t", modifiers: [.command, .control])
-
-                Divider()
-
-                Toggle("Show Hidden Files", isOn: $workspace.showHiddenFiles)
-                    .keyboardShortcut(".", modifiers: [.command, .shift])
-            }
-
-            // MARK: - Window Menu
-            CommandGroup(replacing: .windowArrangement) {
-                Button("Close Tab") {
-                    workspace.closeCurrentTab()
-                }
-                .keyboardShortcut("w", modifiers: .command)
-
-                Button("Close All Tabs") {
-                    workspace.closeAllTabs()
-                }
-                .keyboardShortcut("w", modifiers: [.command, .option])
-
-                Divider()
-
-                Button("Next Tab") {
-                    workspace.selectNextTab()
-                }
-                .keyboardShortcut("]", modifiers: [.command, .shift])
-
-                Button("Previous Tab") {
-                    workspace.selectPreviousTab()
-                }
-                .keyboardShortcut("[", modifiers: [.command, .shift])
-
-                Divider()
-
-                // Cmd+1 through Cmd+9 for tab access
-                ForEach(1...9, id: \.self) { index in
-                    Button("Tab \(index)") {
-                        workspace.selectTab(at: index - 1)
-                    }
-                    .keyboardShortcut(KeyEquivalent(Character("\(index)")), modifiers: .command)
-                }
-            }
-
-            // MARK: - Help Menu
-            CommandGroup(replacing: .help) {
-                Button("MDPreview Website") {
-                    if let url = URL(string: "https://github.com/kazu-42/mdpreview") {
-                        NSWorkspace.shared.open(url)
-                    }
-                }
-
-                Button("Report an Issue") {
-                    if let url = URL(string: "https://github.com/kazu-42/mdpreview/issues") {
-                        NSWorkspace.shared.open(url)
-                    }
-                }
-            }
+            AppCommands()
         }
         .defaultSize(width: 900, height: 700)
+    }
+}
+
+// MARK: - Per-Window Root View
+
+private struct WindowRoot: View {
+    @StateObject private var workspace = Workspace()
+    @State private var hostWindow: NSWindow?
+
+    var body: some View {
+        MainView(workspace: workspace)
+            .frame(minWidth: 500, minHeight: 400)
+            .background(Color(nsColor: .textBackgroundColor))
+            .background(WindowAccessor(window: $hostWindow))
+            .focusedObject(workspace)
+            .onAppear {
+                initializeIfFirstWindow()
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .didRequestOpenFile)) { notification in
+                guard hostWindow?.isKeyWindow == true,
+                      let url = notification.object as? URL else { return }
+                workspace.openURL(url)
+            }
+    }
+
+    private func initializeIfFirstWindow() {
+        guard !AppInitState.shared.firstWindowInitialized else { return }
+        AppInitState.shared.markFirstWindowInitialized()
+        workspace.persistsState = true
+        openFromCommandLineArgs()
+        restoreStateIfNeeded()
     }
 
     private func openFromCommandLineArgs() {
@@ -123,9 +70,140 @@ public struct MDPreviewApp: App {
     }
 
     private func restoreStateIfNeeded() {
-        // Only restore if no files were opened via CLI
         if workspace.tabs.isEmpty {
             workspace.restoreState()
+        }
+    }
+}
+
+// MARK: - NSWindow Accessor
+
+private struct WindowAccessor: NSViewRepresentable {
+    @Binding var window: NSWindow?
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView()
+        DispatchQueue.main.async {
+            self.window = view.window
+        }
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        if window == nil {
+            DispatchQueue.main.async {
+                self.window = nsView.window
+            }
+        }
+    }
+}
+
+// MARK: - Commands
+
+private struct AppCommands: Commands {
+    @FocusedObject private var workspace: Workspace?
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some Commands {
+        // MARK: File Menu
+        CommandGroup(replacing: .newItem) {
+            Button("New Window") {
+                openWindow(id: "main")
+            }
+            .keyboardShortcut("n", modifiers: .command)
+
+            Divider()
+
+            Button("Open...") {
+                workspace?.showOpenPanel()
+            }
+            .keyboardShortcut("o", modifiers: .command)
+        }
+
+        CommandGroup(after: .saveItem) {
+            Button("Export Logs...") {
+                exportLogs()
+            }
+        }
+
+        CommandGroup(after: .appSettings) {
+            Button("Install Command Line Tool...") {
+                CLIInstaller.install()
+            }
+        }
+
+        // MARK: View Menu
+        CommandGroup(after: .toolbar) {
+            Button("Toggle Sidebar") {
+                workspace?.toggleSidebar()
+            }
+            .keyboardShortcut("s", modifiers: [.command, .control])
+
+            Button("Toggle Table of Contents") {
+                NotificationCenter.default.post(name: .toggleTOC, object: nil)
+            }
+            .keyboardShortcut("t", modifiers: [.command, .control])
+
+            Divider()
+
+            Toggle("Show Hidden Files", isOn: Binding(
+                get: { workspace?.showHiddenFiles ?? true },
+                set: { workspace?.showHiddenFiles = $0 }
+            ))
+            .keyboardShortcut(".", modifiers: [.command, .shift])
+        }
+
+        // MARK: Window Menu
+        CommandGroup(replacing: .windowArrangement) {
+            Button("Close Tab") {
+                if let ws = workspace, !ws.tabs.isEmpty {
+                    ws.closeCurrentTab()
+                } else {
+                    NSApp.keyWindow?.close()
+                }
+            }
+            .keyboardShortcut("w", modifiers: .command)
+
+            Button("Close All Tabs") {
+                workspace?.closeAllTabs()
+            }
+            .keyboardShortcut("w", modifiers: [.command, .option])
+
+            Divider()
+
+            Button("Next Tab") {
+                workspace?.selectNextTab()
+            }
+            .keyboardShortcut("]", modifiers: [.command, .shift])
+
+            Button("Previous Tab") {
+                workspace?.selectPreviousTab()
+            }
+            .keyboardShortcut("[", modifiers: [.command, .shift])
+
+            Divider()
+
+            ForEach(1...9, id: \.self) { index in
+                Button("Tab \(index)") {
+                    workspace?.selectTab(at: index - 1)
+                }
+                .keyboardShortcut(KeyEquivalent(Character("\(index)")), modifiers: .command)
+            }
+        }
+
+        // MARK: Help Menu
+        CommandGroup(replacing: .help) {
+            Button("MDPreview Website") {
+                if let url = URL(string: "https://github.com/kazu-42/mdpreview") {
+                    NSWorkspace.shared.open(url)
+                }
+            }
+
+            Button("Report an Issue") {
+                if let url = URL(string: "https://github.com/kazu-42/mdpreview/issues") {
+                    NSWorkspace.shared.open(url)
+                }
+            }
         }
     }
 
@@ -141,7 +219,11 @@ public struct MDPreviewApp: App {
             do {
                 try AppLogger.shared.exportLogs(to: url)
             } catch {
-                workspace.errorMessage = "Failed to export logs: \(error.localizedDescription)"
+                let alert = NSAlert()
+                alert.messageText = "Failed to export logs"
+                alert.informativeText = error.localizedDescription
+                alert.alertStyle = .warning
+                alert.runModal()
             }
         }
     }
