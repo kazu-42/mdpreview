@@ -62,6 +62,10 @@ universal:
 	@if [ -f "Assets/AppIcon.icns" ]; then \
 		cp Assets/AppIcon.icns $(APP_BUNDLE)/Contents/Resources/AppIcon.icns; \
 	fi
+	@# Copy resource bundles from arm64 build output (same resources as x86_64)
+	@for bundle in .build/arm64-apple-macosx/release/*.bundle; do \
+		[ -d "$$bundle" ] && cp -R "$$bundle" $(APP_BUNDLE)/Contents/Resources/; \
+	done
 	@sed -i '' "s/<string>1.0.0</<string>$(VERSION)</g" $(APP_BUNDLE)/Contents/Info.plist
 	@codesign --force --sign - $(APP_BUNDLE)
 	@echo "Built universal: $(APP_BUNDLE)"
