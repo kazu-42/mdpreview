@@ -42,7 +42,7 @@ private struct WindowRoot: View {
             .frame(minWidth: 500, minHeight: 400)
             .background(Color(nsColor: .textBackgroundColor))
             .background(WindowAccessor(window: $hostWindow))
-            .focusedObject(workspace)
+            .focusedSceneValue(\.workspace, workspace)
             .onAppear {
                 initializeIfFirstWindow()
             }
@@ -104,10 +104,23 @@ private struct WindowAccessor: NSViewRepresentable {
     }
 }
 
+// MARK: - Focused Values
+
+private struct WorkspaceFocusKey: FocusedValueKey {
+    typealias Value = Workspace
+}
+
+extension FocusedValues {
+    var workspace: Workspace? {
+        get { self[WorkspaceFocusKey.self] }
+        set { self[WorkspaceFocusKey.self] = newValue }
+    }
+}
+
 // MARK: - Commands
 
 private struct AppCommands: Commands {
-    @FocusedObject private var workspace: Workspace?
+    @FocusedValue(\.workspace) private var workspace: Workspace?
     @Environment(\.openWindow) private var openWindow
 
     var body: some Commands {
