@@ -1,0 +1,419 @@
+ローカルでビルドしたアプリでは、markdownが見れて、完璧に動作しているが、homebrew経由でダウンロードしたアプリだとmarkdownが見えない。原因を調査してほしい
+
+---
+
+ローカルでビルドしたアプリでは、markdownが見れて、完璧に動作しているが、homebrew経由でダウンロードしたアプリだとmarkdownが見えない。原因を調査してほしい
+
+---
+
+export logで、log出せないのもついでに修正して。もしかして原因同じかな？終わったら、アプリリリースして。
+
+---
+
+アイコンサイズがアプリアイコンより小さくなってるの気になる
+
+---
+
+[Request interrupted by user]
+
+---
+
+カーソルの位置がファイルごとに独立してなくて、隣のタブで真ん中までページをスクロールすると、隣のファイルでもスクロールされてしまい、結果としてそこまでの長さのないファイルだと何も表示されないみたいなバグっぽい挙動しちゃってる。それ以外もバグっぽい挙動ないか徹底的に洗い出して、問題なければ、/mac app releaseみたいなskills使って丁寧にリリース作業やりきって
+
+---
+
+This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation.
+
+Analysis:
+Let me chronologically analyze the conversation:
+
+1. **Initial Request**: User reports that the locally built MDPreview app works fine but the Homebrew-installed version can't display markdown. They want the cause investigated.
+
+2. **Investigation Phase**: 
+   - Explored project structure (Swift macOS app using WKWebView for markdown rendering)
+   - Discovered the app is built with SPM, distributed via Homebrew Cask and GitHub Releases
+   - Found resource bundle structure differs between local and CI builds
+   - Checked installed app at `/Applications/MDPreview.app`
+   - Found `com.apple.provenance` extended attributes on Homebrew-installed files
+
+3. **Root Cause Discovery**: 
+   - `Supporting/MDPreview.entitlements` had `com.apple.security.app-sandbox = true`
+   - Local build uses ad-hoc signing (`codesign --force --sign -`) WITHOUT entitlements → sandbox NOT enforced
+   - CI/Homebrew build uses Developer ID signing WITH entitlements → sandbox IS enforced
+   - User confirmed with screenshot showing "Cannot read file: CONTRIBUTING.md" error
+   - Also found WKWebView `allowingReadAccessTo` only pointed to markdown file directory, not bundle resources
+
+4. **Fix #1 - App Sandbox**:
+   - Removed `com.apple.security.app-sandbox` and `com.apple.security.files.user-selected.read-only` from entitlements
+   - Kept Hardened Runtime settings for notarization
+
+5. **Fix #2 - WKWebView access**:
+   - Changed `allowingReadAccessTo` from markdown file's directory to `URL(fileURLWithPath: "/")` (root filesystem)
+
+6. **Fix #3 - Log export**:
+   - User mentioned "export logで、log出せないのもついでに修正して"
+   - Same sandbox root cause
+   - Also fixed `exportLogs` to handle existing file overwrite with `removeItem` before `copyItem`
+
+7. **v1.2.9 Release**:
+   - Updated version in Info.plist and CLI script
+   - Committed, tagged v1.2.9, pushed
+   - CI built and released (but with ad-hoc signing, not Developer ID)
+   - Updated Homebrew tap (resolved merge conflict)
+
+8. **Icon Size Issue**:
+   - User noticed app icon appears smaller than other app icons
+   - Investigated: opaque content used only ~84% of canvas width
+   - Generated scaled versions (1.09x and 1.16x)
+   - User chose v2 (1.16x scale)
+   - Converted to icns and committed
+
+9. **Apple Signing Issue**:
+   - User pointed out "appleの署名入ってないよ。ちゃんとやって"
+   - Discovered both v1.2.8 and v1.2.9 CI builds used ad-hoc signing (GitHub secrets not configured)
+   - Found Developer ID certificate exists locally: "Developer ID Application: Takami Kazuihro (6RQMKB9NL7)"
+   - Deleted v1.2.9 release and tag
+   - Was about to do local signed release when user interrupted
+
+10. **Bug Fix Request** (most recent):
+    - User reported scroll position bug: switching tabs carries scroll position from one tab to another
+    - User requested thorough bug investigation AND release with Apple signing
+    - User said "それ以外もバグっぽい挙動ないか徹底的に洗い出して、問題なければ、/mac app releaseみたいなskills使って丁寧にリリース作業やりきって"
+
+11. **Bug Investigation and Fixes**:
+    - Found 4 bugs total:
+      1. CRITICAL: Scroll position shared between tabs (single WKWebView, render() preserves scroll ratio)
+      2. MEDIUM: `isLoaded` not reset when template reloads
+      3. MEDIUM: Large file async load race condition
+      4. MINOR: TOC extraction matches headings in code blocks
+    
+    - Fixed all 4 bugs:
+      - Added `contentID` (tab UUID) to MarkdownWebView for tab switch detection
+      - Modified JS `render()` to accept `preserveScroll` parameter
+      - Reset `isLoaded` when template reloads, added early return
+      - Added race condition guard with `expectedTabID` check
+      - Added code block tracking in TOC extraction
+    
+    - Updated test for new render function signature
+    - All 66 tests pass
+    - Updated version to 1.3.0
+
+12. **Current State**: 
+    - All bug fixes committed to local files (not yet git committed)
+    - Version bumped to 1.3.0
+    - Need to: git commit, do Apple-signed release, update Homebrew tap
+    - The v1.2.9 release was deleted from GitHub, tag deleted
+    - Icon change was committed to git but not released
+
+Key files modified:
+- `Supporting/MDPreview.entitlements` - removed sandbox
+- `Sources/MDPreviewCore/MarkdownWebView.swift` - scroll fix, isLoaded fix, readAccessURL fix
+- `Sources/MDPreviewCore/Resources/template.html` - render() preserveScroll parameter
+- `Sources/MDPreviewCore/MainView.swift` - pass contentID
+- `Sources/MDPreviewCore/Workspace.swift` - race condition fix, TOC code block fix
+- `Sources/MDPreviewCore/Logger.swift` - export overwrite fix
+- `Supporting/Info.plist` - version 1.3.0
+- `Supporting/mdpreview` - version 1.3.0
+- `Assets/AppIcon.icns` - scaled up icon
+- `Tests/MDPreviewCoreTests/MarkdownRenderingTests.swift` - updated test
+
+Summary:
+1. Primary Request and Intent:
+   - **Initial**: Investigate why MDPreview app works locally but not when installed via Homebrew (markdown not visible)
+   - **Secondary**: Fix export log feature that also couldn't write files
+   - **Icon**: Fix app icon appearing smaller than other macOS app icons
+   - **Signing**: Release with proper Apple Developer ID code signing (not ad-hoc)
+   - **Bugs**: Fix scroll position shared between tabs bug, thoroughly investigate all other bugs, then do a proper signed release
+   - User explicitly requested: "それ以外もバグっぽい挙動ないか徹底的に洗い出して、問題なければ、/mac app releaseみたいなskills使って丁寧にリリース作業やりきって"
+
+2. Key Technical Concepts:
+   - macOS App Sandbox vs Hardened Runtime (sandbox optional for Developer ID apps, required for Mac App Store)
+   - WKWebView `loadFileURL(_:allowingReadAccessTo:)` file access scoping
+   - Swift Package Manager resource bundle structure differences between local and CI builds (flat vs `Contents/` wrapper)
+   - Ad-hoc code signing (`codesign --sign -`) vs Developer ID signing (entitlements enforced only with proper signing)
+   - `com.apple.provenance` extended attributes on Homebrew-installed files
+   - macOS sandbox container at `~/Library/Containers/{bundleID}/`
+   - NSViewRepresentable lifecycle (makeNSView, updateNSView) with shared WKWebView across tabs
+   - Developer ID certificate: "Developer ID Application: Takami Kazuihro (6RQMKB9NL7)"
+   - GitHub Actions release workflow with universal binary (arm64 + x86_64)
+   - Homebrew Cask distribution via `kazu-42/homebrew-tap`
+
+3. Files and Code Sections:
+
+   - **`Supporting/MDPreview.entitlements`** — Root cause of Homebrew file access failure. Removed App Sandbox entitlements, kept Hardened Runtime only.
+     ```xml
+     <?xml version="1.0" encoding="UTF-8"?>
+     <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+     <plist version="1.0">
+     <dict>
+         <!-- Hardened Runtime (required for notarization) -->
+         <key>com.apple.security.cs.allow-jit</key>
+         <false/>
+         <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+         <false/>
+         <key>com.apple.security.cs.disable-executable-page-protection</key>
+         <false/>
+         <key>com.apple.security.cs.disable-library-validation</key>
+         <false/>
+     </dict>
+     </plist>
+     ```
+
+   - **`Sources/MDPreviewCore/MarkdownWebView.swift`** — Core rendering view. Multiple fixes applied:
+     - Added `contentID: UUID?` property to track tab switches
+     - Fixed `updateNSView` to reset `isLoaded` when template reloads and detect tab changes
+     - Changed `allowingReadAccessTo` from markdown directory to `URL(fileURLWithPath: "/")`
+     - Added `preserveScroll` parameter to `evaluateRender`
+     - Added `pendingPreserveScroll` and `currentContentID` to Coordinator
+     ```swift
+     public struct MarkdownWebView: NSViewRepresentable {
+         public let markdownContent: String
+         public let baseURL: URL?
+         public let contentID: UUID?
+
+         public init(markdownContent: String, baseURL: URL? = nil, contentID: UUID? = nil) {
+             self.markdownContent = markdownContent
+             self.baseURL = baseURL
+             self.contentID = contentID
+         }
+     ```
+     ```swift
+     public func updateNSView(_ webView: WKWebView, context: Context) {
+         let tabChanged = context.coordinator.currentContentID != contentID
+         context.coordinator.currentContentID = contentID
+
+         // If base URL changed, reload template
+         if context.coordinator.baseURL != baseURL {
+             context.coordinator.baseURL = baseURL
+             context.coordinator.isLoaded = false
+             context.coordinator.pendingContent = markdownContent
+             context.coordinator.pendingPreserveScroll = false
+             loadTemplate(into: webView, baseURL: baseURL)
+             return
+         }
+
+         if context.coordinator.isLoaded {
+             evaluateRender(webView: webView, content: markdownContent, baseURL: baseURL, preserveScroll: !tabChanged)
+         } else {
+             context.coordinator.pendingContent = markdownContent
+             context.coordinator.pendingPreserveScroll = !tabChanged
+         }
+     }
+     ```
+     ```swift
+     // readAccessURL fix
+     let readAccessURL = URL(fileURLWithPath: "/")
+     webView.loadFileURL(resourceURL, allowingReadAccessTo: readAccessURL)
+     ```
+
+   - **`Sources/MDPreviewCore/Resources/template.html`** — JS render function updated with `preserveScroll` parameter:
+     ```javascript
+     function render(markdown, basePath, preserveScroll) {
+         if (basePath) {
+             var base = document.querySelector('base');
+             if (!base) {
+                 base = document.createElement('base');
+                 document.head.appendChild(base);
+             }
+             base.href = 'file://' + basePath + '/';
+         }
+         var scrollY = 0;
+         var scrollHeight = 0;
+         if (preserveScroll) {
+             scrollY = window.scrollY;
+             scrollHeight = document.documentElement.scrollHeight;
+         }
+         var html = marked.parse(markdown || '');
+         document.getElementById('content').innerHTML = html;
+         document.querySelectorAll('h1, h2, h3, h4, h5, h6').forEach(function(heading) {
+             var slug = heading.textContent.toLowerCase()
+                 .replace(/[^a-z0-9\s-]/g, '')
+                 .replace(/\s+/g, '-');
+             heading.id = slug;
+         });
+         document.querySelectorAll('pre code').forEach(function(block) {
+             hljs.highlightElement(block);
+         });
+         if (preserveScroll && scrollHeight > 0 && scrollY > 0) {
+             var newScrollHeight = document.documentElement.scrollHeight;
+             var ratio = scrollY / scrollHeight;
+             window.scrollTo(0, ratio * newScrollHeight);
+         } else if (!preserveScroll) {
+             window.scrollTo(0, 0);
+         }
+     }
+     ```
+
+   - **`Sources/MDPreviewCore/MainView.swift`** — Pass `contentID` to MarkdownWebView:
+     ```swift
+     MarkdownWebView(
+         markdownContent: workspace.markdownContent,
+         baseURL: workspace.currentFileDirectory,
+         contentID: workspace.selectedTabID
+     )
+     ```
+
+   - **`Sources/MDPreviewCore/Workspace.swift`** — Two fixes:
+     - Race condition fix in `loadContent` for large async file loads:
+     ```swift
+     if fileSize > 1_000_000 {
+         let expectedTabID = tab.id
+         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+             do {
+                 let content = try String(contentsOf: tab.url, encoding: .utf8)
+                 DispatchQueue.main.async {
+                     guard self?.selectedTabID == expectedTabID else { return }
+                     self?.markdownContent = content
+                     self?.errorMessage = nil
+                 }
+             }
+         }
+     }
+     ```
+     - TOC extraction fix to skip code blocks:
+     ```swift
+     private func extractTOC(from markdown: String) -> [TOCItem] {
+         var items: [TOCItem] = []
+         let lines = markdown.components(separatedBy: .newlines)
+         var inCodeBlock = false
+         for line in lines {
+             let trimmed = line.trimmingCharacters(in: .whitespaces)
+             if trimmed.hasPrefix("```") || trimmed.hasPrefix("~~~") {
+                 inCodeBlock = !inCodeBlock
+                 continue
+             }
+             guard !inCodeBlock else { continue }
+             if trimmed.hasPrefix("#") {
+                 // ... heading extraction with guard !title.isEmpty
+             }
+         }
+         return items
+     }
+     ```
+
+   - **`Sources/MDPreviewCore/Logger.swift`** — Fixed export to handle existing files:
+     ```swift
+     public func exportLogs(to url: URL) throws {
+         if FileManager.default.fileExists(atPath: url.path) {
+             try FileManager.default.removeItem(at: url)
+         }
+         try FileManager.default.copyItem(at: logFileURL, to: url)
+     }
+     ```
+
+   - **`Assets/AppIcon.icns`** — Scaled up 1.16x to fill macOS squircle mask better (was using ~84% of canvas)
+
+   - **`Supporting/Info.plist`** — Version updated to 1.3.0
+
+   - **`Supporting/mdpreview`** — CLI version updated to 1.3.0
+
+   - **`Tests/MDPreviewCoreTests/MarkdownRenderingTests.swift`** — Updated test for new render function signature:
+     ```swift
+     XCTAssertTrue(content.contains("function render(markdown, basePath, preserveScroll)"),
+         "template.html should contain the render(markdown, basePath, preserveScroll) function")
+     ```
+
+   - **`Makefile`** — Not modified but important: local `make all` does NOT pass entitlements; CI release.yml DOES pass entitlements. This was the root cause of behavioral difference.
+
+   - **`.github/workflows/release.yml`** — CI release pipeline. GitHub secrets for Developer ID signing are NOT configured, so CI always falls back to ad-hoc signing.
+
+   - **Homebrew tap** (`~/homebrew-tap/Casks/mdpreview.rb`) — Updated to v1.2.9 with corrected DMG URL pattern and proper zap paths. Will need update again for v1.3.0.
+
+4. Errors and Fixes:
+   - **"Cannot read file" error in Homebrew app**: Root cause was App Sandbox enforced only with Developer ID signing. Fixed by removing sandbox from entitlements.
+   - **WKWebView can't load bundle CSS/JS**: `allowingReadAccessTo` pointed only to markdown file directory. Fixed by using root filesystem `/`.
+   - **Log export fails**: Same sandbox issue + `copyItem` doesn't overwrite existing files. Fixed by removing sandbox and adding `removeItem` before `copyItem`.
+   - **CI release ad-hoc signed**: GitHub secrets `DEVELOPER_ID_CERT_BASE64` not configured, so "Install Apple certificate" and "Code sign (with Developer ID)" steps are skipped. Both v1.2.8 and v1.2.9 were ad-hoc signed. User explicitly told to fix: "appleの署名入ってないよ。ちゃんとやって" and "署名入れて、リリースし直して"
+   - **Homebrew tap push conflict**: Remote had been updated (v1.2.8 cask). Resolved merge conflict during rebase.
+   - **Test failure after render() signature change**: `testTemplateHTMLContainsRenderFunction` checked for old signature `render(markdown, basePath)`. Updated to check for `render(markdown, basePath, preserveScroll)`.
+   - **Sandbox container persisted**: After removing sandbox, old container at `~/Library/Containers/dev.kazu42.mdpreview/` was still present, redirecting logs. Had to delete it.
+
+5. Problem Solving:
+   - Solved: Homebrew app can't read files (sandbox removal)
+   - Solved: WKWebView resource loading (readAccessURL fix)
+   - Solved: Log export (sandbox + overwrite fix)
+   - Solved: Icon size perception (1.16x scale)
+   - Solved: Scroll position shared between tabs (contentID tracking + preserveScroll parameter)
+   - Solved: isLoaded not reset on template reload (early return + reset)
+   - Solved: Async file load race condition (tab ID guard)
+   - Solved: TOC code block false positives (inCodeBlock tracking)
+   - **NOT YET solved**: Apple Developer ID signing for releases (CI secrets not configured; local signing available but release not yet done)
+
+6. All User Messages:
+   - "ローカルでビルドしたアプリでは、markdownが見れて、完璧に動作しているが、homebrew経由でダウンロードしたアプリだとmarkdownが見えない。原因を調査してほしい"
+   - "cannot read the fileとか言われる。" (with screenshot showing "Cannot read file: CONTRIBUTING.md")
+   - "export logで、log出せないのもついでに修正して。もしかして原因同じかな？終わったら、アプリリリースして。"
+   - "アイコンサイズがアプリアイコンより小さくなってるの気になる"
+   - (Selected "v2 (1.16x) を採用" for icon size)
+   - (Selected "次回まとめて" for icon release timing)
+   - "また、appleの署名入ってないよ。ちゃんとやって。"
+   - "署名入れて、リリースし直して"
+   - "カーソルの位置がファイルごとに独立してなくて、隣のタブで真ん中までページをスクロールすると、隣のファイルでもスクロールされてしまい、結果としてそこまでの長さのないファイルだと何も表示されないみたいなバグっぽい挙動しちゃってる。それ以外もバグっぽい挙動ないか徹底的に洗い出して、問題なければ、/mac app releaseみたいなskills使って丁寧にリリース作業やりきって"
+
+7. Pending Tasks:
+   - Git commit the bug fixes and version bump to 1.3.0 (files are modified but NOT yet committed)
+   - Do a properly Apple Developer ID signed release (local signing with certificate "Developer ID Application: Takami Kazuihro (6RQMKB9NL7)")
+   - The v1.2.9 release and tag were DELETED from GitHub — need a new release
+   - Update Homebrew tap for new version
+   - User requested using a skill like "/mac app release" for the release process
+   - Notarization requires env vars: APPLE_ID, TEAM_ID, APP_PASSWORD
+
+8. Current Work:
+   Immediately before the summary request, I had just completed fixing all 4 bugs:
+   1. Scroll position shared between tabs (CRITICAL)
+   2. `isLoaded` not reset when template reloads (MEDIUM)
+   3. Large file async load race condition (MEDIUM)
+   4. TOC code block false positives (MINOR)
+   
+   All 66 tests pass. Version has been bumped to 1.3.0 in Info.plist and CLI script. Files are modified but NOT yet git committed. The next step was to commit and do a properly signed release.
+
+   Git status (uncommitted changes):
+   - `Sources/MDPreviewCore/MarkdownWebView.swift` — scroll fix, isLoaded fix
+   - `Sources/MDPreviewCore/Resources/template.html` — preserveScroll parameter
+   - `Sources/MDPreviewCore/MainView.swift` — contentID pass-through
+   - `Sources/MDPreviewCore/Workspace.swift` — race condition fix, TOC fix
+   - `Supporting/Info.plist` — version 1.3.0
+   - `Supporting/mdpreview` — version 1.3.0
+   - `Tests/MDPreviewCoreTests/MarkdownRenderingTests.swift` — updated test
+
+   Already committed (on main, pushed):
+   - `Supporting/MDPreview.entitlements` — sandbox removed (in v1.2.9 commit)
+   - `Sources/MDPreviewCore/MarkdownWebView.swift` — readAccessURL fix (in v1.2.9 commit)
+   - `Sources/MDPreviewCore/Logger.swift` — export fix (in v1.2.9 commit)
+   - `Assets/AppIcon.icns` — scaled icon (separate commit)
+
+9. Optional Next Step:
+   Commit the bug fixes, then perform a properly Apple Developer ID signed release as the user explicitly requested: "署名入れて、リリースし直して" and "問題なければ、/mac app releaseみたいなskills使って丁寧にリリース作業やりきって".
+   
+   Steps needed:
+   1. `git add` and `git commit` the 7 modified files
+   2. `git push origin main`
+   3. Build universal binary locally (arm64 + x86_64)
+   4. Create .app bundle with resources
+   5. Sign with Developer ID certificate (locally available)
+   6. Create DMG, notarize (needs APPLE_ID, TEAM_ID, APP_PASSWORD env vars — may need to ask user)
+   7. Create GitHub release with signed artifacts
+   8. Update Homebrew tap with new version and SHA256
+
+If you need specific details from before compaction (like exact code snippets, error messages, or content you generated), read the full transcript at: /Users/kazu42/.claude/projects/-Users-kazu42-dev-mdpreview/6fbf0e48-4cf6-4207-b545-40bf991fe514.jsonl
+Please continue the conversation from where we left off without asking the user any further questions. Continue with the last task that you were asked to work on.
+
+---
+
+upgradeして
+
+---
+
+複数window対応して下さい。コマンドNで新しいwindow開いたり、コマンドで複数起動されたら新しいwindowで開くようにして下さい。
+
+---
+
+それ以外もcodeコマンドでできること一旦調査してまとめて
+
+---
+
+全部修正してほしい。planingしてから実装進めて
+
+---
+
+[Request interrupted by user for tool use]
