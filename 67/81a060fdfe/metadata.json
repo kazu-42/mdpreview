@@ -3,8 +3,9 @@
   "checkpoint_id": "6781a060fdfe",
   "strategy": "manual-commit",
   "branch": "main",
-  "checkpoints_count": 1,
+  "checkpoints_count": 2,
   "files_touched": [
+    "Sources/MDPreviewCore/MarkdownWebView.swift",
     "Supporting/MDPreview.entitlements"
   ],
   "sessions": [
@@ -14,13 +15,20 @@
       "context": "/67/81a060fdfe/0/context.md",
       "content_hash": "/67/81a060fdfe/0/content_hash.txt",
       "prompt": "/67/81a060fdfe/0/prompt.txt"
+    },
+    {
+      "metadata": "/67/81a060fdfe/1/metadata.json",
+      "transcript": "/67/81a060fdfe/1/full.jsonl",
+      "context": "/67/81a060fdfe/1/context.md",
+      "content_hash": "/67/81a060fdfe/1/content_hash.txt",
+      "prompt": "/67/81a060fdfe/1/prompt.txt"
     }
   ],
   "token_usage": {
-    "input_tokens": 494223,
-    "cache_creation_tokens": 0,
-    "cache_read_tokens": 28359360,
-    "output_tokens": 53472,
-    "api_call_count": 290
+    "input_tokens": 494272,
+    "cache_creation_tokens": 79472,
+    "cache_read_tokens": 31656868,
+    "output_tokens": 75852,
+    "api_call_count": 334
   }
 }
