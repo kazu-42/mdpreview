@@ -1,5 +1,4 @@
 import SwiftUI
-import UniformTypeIdentifiers
 
 // MARK: - Model
 
@@ -97,19 +96,60 @@ public struct FileTreeNode: Identifiable, Hashable {
     }
 
     /// Returns true if the file can be opened as text in MDPreview.
-    /// Strategy: extension map → filename map → UTI conformance (macOS built-in, ~microseconds).
+    /// Returns true if the file can be opened as text in MDPreview.
+    /// Algorithm mirrors `content_inspector` (sharkdp/bat):
+    ///   1. Extension / filename map  → O(1) fast path
+    ///   2. BOM detection             → UTF-16/32 files are text even though they contain NUL
+    ///   3. Magic bytes fast-reject   → common binaries (PNG, JPEG, PDF, Mach-O, ELF, ZIP…) skip NUL scan
+    ///   4. NUL byte scan             → first 1024 bytes; any 0x00 = binary
     public static func isTextFile(_ url: URL) -> Bool {
         let ext = url.pathExtension.lowercased()
         let name = url.lastPathComponent.lowercased()
         if markdownExtensions.contains(ext) { return true }
         if codeExtensionMap[ext] != nil { return true }
         if codeFilenameMap[name] != nil { return true }
-        // UTI fallback: covers LICENSE, .env, unknown text files, etc.
-        if let values = try? url.resourceValues(forKeys: [.contentTypeKey]),
-           let contentType = values.contentType {
-            return contentType.conforms(to: .text)
-        }
-        return false
+
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return false }
+        defer { try? handle.close() }
+        let data = handle.readData(ofLength: 1024)
+        guard !data.isEmpty else { return true }
+
+        // Stage 1: BOM — these are text encodings that legitimately contain NUL bytes.
+        let boms: [[UInt8]] = [
+            [0xEF, 0xBB, 0xBF],             // UTF-8 BOM
+            [0x00, 0x00, 0xFE, 0xFF],       // UTF-32 BE  (check before UTF-16 to avoid prefix collision)
+            [0xFF, 0xFE, 0x00, 0x00],       // UTF-32 LE
+            [0xFE, 0xFF],                   // UTF-16 BE
+            [0xFF, 0xFE],                   // UTF-16 LE
+        ]
+        for bom in boms where data.hasPrefix(bom) { return true }
+
+        // Stage 2: Known binary magic bytes — fast-reject without full NUL scan.
+        let magicBinary: [[UInt8]] = [
+            [0x89, 0x50, 0x4E, 0x47],       // PNG
+            [0xFF, 0xD8, 0xFF],             // JPEG
+            [0x47, 0x49, 0x46, 0x38],       // GIF
+            [0x25, 0x50, 0x44, 0x46],       // PDF
+            [0x50, 0x4B, 0x03, 0x04],       // ZIP (JAR, DOCX, XLSX, …)
+            [0x1F, 0x8B],                   // gzip
+            [0xFD, 0x37, 0x7A, 0x58],       // xz
+            [0x42, 0x5A, 0x68],             // bzip2
+            [0x7F, 0x45, 0x4C, 0x46],       // ELF
+            [0xCA, 0xFE, 0xBA, 0xBE],       // Mach-O FAT / Java class
+            [0xCE, 0xFA, 0xED, 0xFE],       // Mach-O 32-bit LE
+            [0xCF, 0xFA, 0xED, 0xFE],       // Mach-O 64-bit LE
+            [0xFE, 0xED, 0xFA, 0xCE],       // Mach-O 32-bit BE
+            [0xFE, 0xED, 0xFA, 0xCF],       // Mach-O 64-bit BE
+            [0x4D, 0x5A],                   // Windows PE (MZ)
+            [0x52, 0x61, 0x72, 0x21],       // RAR
+            [0x37, 0x7A, 0xBC, 0xAF],       // 7-Zip
+            [0x89, 0x48, 0x44, 0x46],       // HDF5
+            [0x53, 0x51, 0x4C, 0x69],       // SQLite
+        ]
+        for magic in magicBinary where data.hasPrefix(magic) { return false }
+
+        // Stage 3: NUL byte scan — the core heuristic (same as git, ripgrep, file command).
+        return !data.contains(0)
     }
 
     // Note: Hidden files/directories (starting with .) are now shown
@@ -255,5 +295,16 @@ struct FileTreeRow: View {
                 : nil
         )
         .opacity(node.isDirectory || isText ? 1.0 : 0.5)
+    }
+}
+
+// MARK: - Data helpers
+
+private extension Data {
+    func hasPrefix(_ bytes: [UInt8]) -> Bool {
+        guard count >= bytes.count else { return false }
+        return withUnsafeBytes { (ptr: UnsafeRawBufferPointer) in
+            bytes.enumerated().allSatisfy { i, byte in ptr[i] == byte }
+        }
     }
 }
