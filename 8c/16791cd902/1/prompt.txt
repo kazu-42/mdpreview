@@ -1,0 +1,2306 @@
+Implement the following plan:
+
+# MDPreview 機能追加計画
+
+## Context
+VS Code Markdownユーザーが使っている機能でMDPreviewに不足しているものを全て対応する。
+- `#heading` アンカーリンクがページリロードになるバグ修正
+- KaTeX数式レンダリング
+- Mermaidダイアグラム
+- カスタムCSS
+- リンクバリデーション（リンク切れ検出）
+
+## 実装順序
+1. **アンカーリンク修正** (バグ修正、他の機能の前提)
+2. **KaTeX数式** (リソースバンドルパターンを確立)
+3. **Mermaid** (同パターン)
+4. **カスタムCSS** (独立した機能)
+5. **リンクバリデーション** (レンダリングパイプライン安定後)
+
+---
+
+## 1. アンカーリンク修正
+
+### 問題
+`<a href="#heading">` クリック → WKWebViewが `file:///base-dir/#heading` へナビゲーション → テンプレートリロード → コンテンツ消失
+
+### 修正方針
+
+**`template.html`** — JSクリックインターセプター追加:
+```js
+document.addEventListener('click', function(e) {
+    var target = e.target;
+    while (target && target.tagName !== 'A') target = target.parentElement;
+    if (!target) return;
+    var href = target.getAttribute('href');
+    if (href && href.startsWith('#')) {
+        e.preventDefault();
+        scrollToAnchor(href.slice(1));
+    }
+});
+```
+
+**`MarkdownWebView.swift`** — `decidePolicyFor` でフラグメント付きmdリンク対応:
+- `./other.md#section` → フラグメントを分離、ファイルを開いてからアンカーへスクロール
+- `userInfo: ["fragment": "section"]` で通知に含める
+
+**`MDPreviewApp.swift`** — `onReceive(.didRequestOpenFile)` でフラグメント処理:
+- `notification.userInfo?["fragment"]` を抽出
+- 0.3秒後に `.scrollToAnchor` を発行
+
+---
+
+## 2. KaTeX数式レンダリング
+
+### バンドルファイル (CDNからダウンロード)
+- `katex.min.js` + `katex.min.css` + `auto-render.min.js`
+- `fonts/` ディレクトリ (WOFF2形式、約20ファイル)
+
+### 修正ファイル
+
+**`template.html`**:
+```html
+<link rel="stylesheet" href="katex.min.css">
+<script src="katex.min.js"></script>
+<script src="auto-render.min.js"></script>
+```
+`render()` 内、hljs後に:
+```js
+renderMathInElement(document.getElementById('content'), {
+    delimiters: [
+        {left: '$$', right: '$$', display: true},
+        {left: '$', right: '$', display: false},
+        {left: '\\(', right: '\\)', display: false},
+        {left: '\\[', right: '\\]', display: true}
+    ],
+    throwOnError: false
+});
+```
+
+ダークモードCSS追加: `.katex { color: inherit; }`
+
+### 注意
+- `escapeForJavaScript` が `$` を `\$` にエスケープ → JSテンプレートリテラル内で `$` に戻る → KaTeX正常動作
+- `<base>` タグはCSS `url()` に影響しない → KaTeXフォント読み込みOK
+
+---
+
+## 3. Mermaidダイアグラム
+
+### バンドルファイル
+- `mermaid.min.js` (~1.5MB)
+
+### 修正ファイル
+
+**`template.html`**:
+```html
+<script src="mermaid.min.js"></script>
+```
+初期化 (startOnLoad: false) + ダーク/ライトテーマ自動切替
+
+`render()` 内でhljs後に:
+```js
+var mermaidBlocks = document.querySelectorAll('pre code.language-mermaid');
+// <pre><code> を <div class="mermaid"> に置換
+// mermaid.run() を呼び出し
+```
+
+CSS追加: `.mermaid { text-align: center; margin: 16px 0; }`
+
+---
+
+## 4. カスタムCSS
+
+### 修正ファイル
+
+**`Workspace.swift`**:
+- `@AppStorage("customCSSPath")` でパス永続化
+- `@Published var customCSS: String` でCSS内容
+- 専用 `FileWatcher` でCSS変更をリアルタイム反映
+- `init()` でパスからCSS復元
+
+**`MarkdownWebView.swift`**:
+- `customCSS: String` プロパティ追加
+- `updateNSView` でCSS変更検知 → JS `<style id="custom-css">` を挿入/更新
+
+**`MainView.swift`**:
+- `MarkdownWebView(... customCSS: workspace.customCSS)` にパススルー
+
+**`MDPreviewApp.swift`** (Viewメニュー):
+- "Custom Stylesheet..." → NSOpenPanel (.css選択)
+- "Remove Custom Stylesheet" → パスクリア
+
+---
+
+## 5. リンクバリデーション
+
+### 修正ファイル
+
+**`MarkdownWebView.swift`**:
+- `extractLocalLinks(in:baseURL:)` static メソッド追加
+  - markdownからローカルファイルリンクを正規表現で抽出
+  - `FileManager.fileExists` で存在確認
+  - 壊れたリンクのパスリストを返す
+- `evaluateRender` 後に `markBrokenLinks([...])` をJS呼出し
+
+**`template.html`**:
+```js
+function markBrokenLinks(brokenPaths) {
+    // <a> 要素にマッチしたらclass 'broken-link' 追加
+}
+```
+CSS: `a.broken-link { text-decoration: wavy underline #d1242f; cursor: not-allowed; }`
+
+---
+
+## 全変更ファイル一覧
+
+### 新規ファイル
+| ファイル | 内容 |
+|---|---|
+| `Resources/katex.min.js` | KaTeX JS |
+| `Resources/katex.min.css` | KaTeX CSS |
+| `Resources/auto-render.min.js` | KaTeX auto-render |
+| `Resources/fonts/*.woff2` | KaTeX フォント (~20ファイル) |
+| `Resources/mermaid.min.js` | Mermaid JS |
+
+### 修正ファイル
+| ファイル | 変更内容 |
+|---|---|
+| `Resources/template.html` | アンカーfix, KaTeX/Mermaid統合, broken-link JS/CSS, mermaid CSS |
+| `MarkdownWebView.swift` | アンカー処理, customCSS, extractLocalLinks, broken-link呼出し |
+| `Workspace.swift` | customCSSPath/customCSS, cssWatcher |
+| `MainView.swift` | customCSS パススルー |
+| `MDPreviewApp.swift` | フラグメント処理, Custom Stylesheet メニュー |
+| `Scripts/download-deps.sh` | KaTeX/Mermaid ダウンロード追加 |
+
+### テスト (既存ファイルに追加)
+| ファイル | テスト内容 |
+|---|---|
+| `MarkdownRenderingTests.swift` | KaTeX/Mermaidバンドル確認, template内容確認 |
+| 新規: `LinkValidationTests.swift` | extractLocalLinks の各種ケース |
+| 新規: `CustomCSSTests.swift` | CSS読込、パス永続化、ライブリロード |
+
+### 変更不要
+- `Package.swift` — `.copy("Resources")` で自動的にfonts/も含まれる
+- `FileWatcher.swift` — CSS監視にそのまま再利用
+- `AppDelegate.swift` — 変更不要
+
+## 検証方法
+1. `swift test` で全テストパス確認
+2. ローカルビルドで手動テスト:
+   - `[text](#heading)` クリック → スムーズスクロール
+   - `$E=mc^2$` と `$$\int_0^\infty$$` → 数式レンダリング
+   - ` ```mermaid` ブロック → ダイアグラム表示
+   - カスタムCSS選択 → スタイル反映、ファイル変更でライブリロード
+   - `[text](./nonexistent.md)` → 赤波線アンダーライン表示
+   - ダークモード切替で全機能正常動作
+
+
+If you need specific details from before exiting plan mode (like exact code snippets, error messages, or content you generated), read the full transcript at: /Users/kazu42/.claude/projects/-Users-kazu42-dev-mdpreview/6fbf0e48-4cf6-4207-b545-40bf991fe514.jsonl
+
+If this plan can be broken down into multiple independent tasks, consider using the TeamCreate tool to create a team and parallelize the work.
+
+---
+
+リリースして。skills確認してね
+
+---
+
+➜  mdpreview git:(main) brew upgrade --cask kazu-42/tap/mdpreview
+==> Auto-updating Homebrew...
+Adjust how often this is run with `$HOMEBREW_AUTO_UPDATE_SECS` or disable with
+`$HOMEBREW_NO_AUTO_UPDATE=1`. Hide these hints with `$HOMEBREW_NO_ENV_HINTS=1` (see `man brew`).
+==> Auto-updated Homebrew!
+Updated 2 taps (kazu-42/tap and homebrew/core).
+
+You have 1 outdated formula and 1 outdated cask installed.
+
+==> Fetching downloads for: kazu-42/tap/mdpreview
+✘ Cask mdpreview (1.4.0)                             Verifying     2.2MB/  2.2MB
+Error: Cask reports different checksum:     6b4139fb636c82da58724155051aef90534cccbaffe933ef37049c53511c86c8
+       SHA-256 checksum of downloaded file: eae095f87233a917768c363dba2aedb64d78c78700db522b2ed79ca08cffea1d
+==> Upgrading 1 outdated package:
+kazu-42/tap/mdpreview 1.3.0 -> 1.4.0
+==> Upgrading mdpreview
+==> Purging files for version 1.4.0 of Cask mdpreview
+Error: kazu-42/tap/mdpreview: SHA-256 mismatch
+Expected: 6b4139fb636c82da58724155051aef90534cccbaffe933ef37049c53511c86c8
+  Actual: eae095f87233a917768c363dba2aedb64d78c78700db522b2ed79ca08cffea1d
+    File: /Users/kazu42/Library/Caches/Homebrew/downloads/87702095b4fd9d3a285905ded1b904a4fa5dbf06a67861228b803be139ff48d3--MDPreview-1.4.0.dmg
+To retry an incomplete download, remove the file above.
+
+---
+
+新しいwindowを開いた後に、command Oができないかも
+
+---
+
+This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation.
+
+Analysis:
+Let me analyze the conversation chronologically:
+
+1. **Initial request**: User asked to implement a comprehensive plan for MDPreview app with 5 features: anchor link fix, KaTeX math rendering, Mermaid diagrams, custom CSS, and link validation.
+
+2. **Plan implementation**:
+   - Read key files: template.html, MarkdownWebView.swift, Workspace.swift, MDPreviewApp.swift, MainView.swift, download-deps.sh, Package.swift, existing tests
+   - Fixed download-deps.sh path bug (was `Sources/MDPreview/Resources`, should be `Sources/MDPreviewCore/Resources`)
+   - Downloaded KaTeX 0.16.21 (js, css, fonts) and Mermaid 11.4.1
+   - Rewrote template.html with all 5 features
+   - Updated MarkdownWebView.swift with customCSS param, fragment handling, extractLocalLinks, scrollToAnchor fix
+   - Updated Workspace.swift with customCSS state management
+   - Updated MainView.swift to pass customCSS
+   - Updated MDPreviewApp.swift with fragment handling and Custom Stylesheet menu
+   - Added new test files: LinkValidationTests.swift, CustomCSSTests.swift
+   - Added new tests to MarkdownRenderingTests.swift
+
+3. **Test failures**:
+   - `testInitialCustomCSSIsEmpty` failed because `@AppStorage("customCSSPath")` persisted between tests
+   - `testCSSLiveReload` failed because used wrong notification observer (needed Combine)
+   - Fixed by adding `UserDefaults.standard.removeObject(forKey: "customCSSPath")` in setUp/tearDown and using Combine's `$customCSS` publisher
+
+4. **Release v1.4.0**:
+   - Bumped version to 1.4.0 in Info.plist and Supporting/mdpreview
+   - Built universal binary (arm64 + x86_64) with lipo
+   - Created app bundle with all resources
+   - Signed with Developer ID
+   - Created DMG, signed DMG, notarized (Accepted), stapled
+   - Created GitHub release with assets
+   - Updated Homebrew tap
+
+5. **Homebrew SHA mismatch**:
+   - `gh release upload` corrupted the `MDPreview-1.4.0.dmg` upload (2,219,447→2,193,792 bytes)
+   - GitHub CDN cached the corrupted file
+   - `MDPreview.dmg` (non-versioned) was uploaded correctly and passes notarization
+   - Fixed by changing cask URL to `MDPreview.dmg` instead of `MDPreview-#{version}.dmg`
+   - `brew upgrade` succeeded
+
+6. **Current bug: Cmd+O doesn't work in new windows**:
+   - User reported that after Cmd+N (new window), Cmd+O might not work
+   - Root cause: `@FocusedObject` requires SwiftUI focus within the window, new windows don't have this established
+   - Attempted fix: Change to `@FocusedSceneObject` + `focusedSceneObject` - but `@FocusedSceneObject` is "unknown attribute" in the current SDK (Xcode 26.3 RC)
+   - Current state: Changed `focusedObject` to `focusedSceneValue` in WindowRoot and `@FocusedObject` to `@FocusedValue(\.workspace)` in AppCommands, but haven't built/verified yet
+   - Also need to add `FocusedValues` extension for the custom key
+
+The last action was partially done - changed `@FocusedValue(\.workspace)` in AppCommands but need to:
+1. Change `.focusedObject(workspace)` → `.focusedSceneValue(\.workspace, workspace)` in WindowRoot
+2. Add FocusedValues extension with WorkspaceFocusKey
+
+Wait, actually I see that I already changed `.focusedObject(workspace)` to `.focusedSceneValue` in WindowRoot (I did `focusedSceneObject` then there was an error). Let me re-check the order of edits...
+
+Actually:
+1. Changed `.focusedObject(workspace)` to `.focusedSceneObject(workspace)` in WindowRoot
+2. Changed `@FocusedObject` to `@FocusedSceneObject` in AppCommands  
+3. Build failed: `@FocusedSceneObject` unknown
+4. Changed `@FocusedSceneObject` to `@FocusedValue(\.workspace)` in AppCommands
+5. But WindowRoot still has `.focusedSceneObject(workspace)` which also won't compile
+
+The conversation ended here - still need to fix WindowRoot's modifier and add FocusedValues extension.
+
+Actually, looking at the last assistant response - it only changed `@FocusedSceneObject` to `@FocusedValue(\.workspace)` in AppCommands. The WindowRoot still has `.focusedSceneObject(workspace)` from a previous edit. AND there's no FocusedValues extension defined yet for the custom `workspace` key.
+
+This is the current pending work - the fix is incomplete.
+
+Summary:
+1. Primary Request and Intent:
+   - **Feature implementation**: Implement a comprehensive plan for MDPreview (macOS Markdown preview app) with 5 features: (1) fix `#anchor` link reload bug, (2) KaTeX math rendering, (3) Mermaid diagram rendering, (4) custom CSS support, (5) broken link validation/detection.
+   - **Release**: Release the implemented features as v1.4.0 via Homebrew tap.
+   - **Bug fix**: Fix `Cmd+O` (Open) not working after opening a new window with `Cmd+N`.
+
+2. Key Technical Concepts:
+   - **SwiftUI `@FocusedObject` vs `@FocusedSceneObject` vs `@FocusedValue`**: `@FocusedObject` requires an element within the window to have SwiftUI focus. New windows opened with Cmd+N don't automatically establish SwiftUI focus, so `workspace` becomes nil. `focusedSceneValue` + `@FocusedValue` makes the value available throughout the entire window scene regardless of inner focus state.
+   - **`focusedSceneValue(_:_:)`**: SwiftUI modifier (macOS 13+) that injects a value available at the scene (window) level, not just in the focused element hierarchy.
+   - **`FocusedValues` custom key**: Required to use `focusedSceneValue` with a custom type — must define a `FocusedValueKey` conformance and extend `FocusedValues`.
+   - **WKWebView JS interop**: `evaluateJavaScript` calls are queued sequentially in WKWebView.
+   - **KaTeX auto-render**: `renderMathInElement` with `ignoredTags` defaults excluding `<pre>` and `<code>`, so math in code blocks is safely skipped.
+   - **Mermaid**: Converts `pre code.language-mermaid` → `div.mermaid`, then calls `mermaid.run()`. Theme auto-switches via `prefers-color-scheme`.
+   - **`Analysis:
+Let me analyze the conversation chronologically:
+
+1. **Initial request**: User asked to implement a comprehensive plan for MDPreview app with 5 features: anchor link fix, KaTeX math rendering, Mermaid diagrams, custom CSS, and link validation.
+
+2. **Plan implementation**:
+   - Read key files: template.html, MarkdownWebView.swift, Workspace.swift, MDPreviewApp.swift, MainView.swift, download-deps.sh, Package.swift, existing tests
+   - Fixed download-deps.sh path bug (was `Sources/MDPreview/Resources`, should be `Sources/MDPreviewCore/Resources`)
+   - Downloaded KaTeX 0.16.21 (js, css, fonts) and Mermaid 11.4.1
+   - Rewrote template.html with all 5 features
+   - Updated MarkdownWebView.swift with customCSS param, fragment handling, extractLocalLinks, scrollToAnchor fix
+   - Updated Workspace.swift with customCSS state management
+   - Updated MainView.swift to pass customCSS
+   - Updated MDPreviewApp.swift with fragment handling and Custom Stylesheet menu
+   - Added new test files: LinkValidationTests.swift, CustomCSSTests.swift
+   - Added new tests to MarkdownRenderingTests.swift
+
+3. **Test failures**:
+   - `testInitialCustomCSSIsEmpty` failed because `@AppStorage("customCSSPath")` persisted between tests
+   - `testCSSLiveReload` failed because used wrong notification observer (needed Combine)
+   - Fixed by adding `UserDefaults.standard.removeObject(forKey: "customCSSPath")` in setUp/tearDown and using Combine's `$customCSS` publisher
+
+4. **Release v1.4.0**:
+   - Bumped version to 1.4.0 in Info.plist and Supporting/mdpreview
+   - Built universal binary (arm64 + x86_64) with lipo
+   - Created app bundle with all resources
+   - Signed with Developer ID
+   - Created DMG, signed DMG, notarized (Accepted), stapled
+   - Created GitHub release with assets
+   - Updated Homebrew tap
+
+5. **Homebrew SHA mismatch**:
+   - `gh release upload` corrupted the `MDPreview-1.4.0.dmg` upload (2,219,447→2,193,792 bytes)
+   - GitHub CDN cached the corrupted file
+   - `MDPreview.dmg` (non-versioned) was uploaded correctly and passes notarization
+   - Fixed by changing cask URL to `MDPreview.dmg` instead of `MDPreview-#{version}.dmg`
+   - `brew upgrade` succeeded
+
+6. **Current bug: Cmd+O doesn't work in new windows**:
+   - User reported that after Cmd+N (new window), Cmd+O might not work
+   - Root cause: `@FocusedObject` requires SwiftUI focus within the window, new windows don't have this established
+   - Attempted fix: Change to `@FocusedSceneObject` + `focusedSceneObject` - but `@FocusedSceneObject` is "unknown attribute" in the current SDK (Xcode 26.3 RC)
+   - Current state: Changed `focusedObject` to `focusedSceneValue` in WindowRoot and `@FocusedObject` to `@FocusedValue(\.workspace)` in AppCommands, but haven't built/verified yet
+   - Also need to add `FocusedValues` extension for the custom key
+
+The last action was partially done - changed `@FocusedValue(\.workspace)` in AppCommands but need to:
+1. Change `.focusedObject(workspace)` → `.focusedSceneValue(\.workspace, workspace)` in WindowRoot
+2. Add FocusedValues extension with WorkspaceFocusKey
+
+Wait, actually I see that I already changed `.focusedObject(workspace)` to `.focusedSceneValue` in WindowRoot (I did `focusedSceneObject` then there was an error). Let me re-check the order of edits...
+
+Actually:
+1. Changed `.focusedObject(workspace)` to `.focusedSceneObject(workspace)` in WindowRoot
+2. Changed `@FocusedObject` to `@FocusedSceneObject` in AppCommands  
+3. Build failed: `@FocusedSceneObject` unknown
+4. Changed `@FocusedSceneObject` to `@FocusedValue(\.workspace)` in AppCommands
+5. But WindowRoot still has `.focusedSceneObject(workspace)` which also won't compile
+
+The conversation ended here - still need to fix WindowRoot's modifier and add FocusedValues extension.
+
+Actually, looking at the last assistant response - it only changed `@FocusedSceneObject` to `@FocusedValue(\.workspace)` in AppCommands. The WindowRoot still has `.focusedSceneObject(workspace)` from a previous edit. AND there's no FocusedValues extension defined yet for the custom `workspace` key.
+
+This is the current pending work - the fix is incomplete.
+
+ escaping**: `escapeForJavaScript` converts `Analysis:
+Let me analyze the conversation chronologically:
+
+1. **Initial request**: User asked to implement a comprehensive plan for MDPreview app with 5 features: anchor link fix, KaTeX math rendering, Mermaid diagrams, custom CSS, and link validation.
+
+2. **Plan implementation**:
+   - Read key files: template.html, MarkdownWebView.swift, Workspace.swift, MDPreviewApp.swift, MainView.swift, download-deps.sh, Package.swift, existing tests
+   - Fixed download-deps.sh path bug (was `Sources/MDPreview/Resources`, should be `Sources/MDPreviewCore/Resources`)
+   - Downloaded KaTeX 0.16.21 (js, css, fonts) and Mermaid 11.4.1
+   - Rewrote template.html with all 5 features
+   - Updated MarkdownWebView.swift with customCSS param, fragment handling, extractLocalLinks, scrollToAnchor fix
+   - Updated Workspace.swift with customCSS state management
+   - Updated MainView.swift to pass customCSS
+   - Updated MDPreviewApp.swift with fragment handling and Custom Stylesheet menu
+   - Added new test files: LinkValidationTests.swift, CustomCSSTests.swift
+   - Added new tests to MarkdownRenderingTests.swift
+
+3. **Test failures**:
+   - `testInitialCustomCSSIsEmpty` failed because `@AppStorage("customCSSPath")` persisted between tests
+   - `testCSSLiveReload` failed because used wrong notification observer (needed Combine)
+   - Fixed by adding `UserDefaults.standard.removeObject(forKey: "customCSSPath")` in setUp/tearDown and using Combine's `$customCSS` publisher
+
+4. **Release v1.4.0**:
+   - Bumped version to 1.4.0 in Info.plist and Supporting/mdpreview
+   - Built universal binary (arm64 + x86_64) with lipo
+   - Created app bundle with all resources
+   - Signed with Developer ID
+   - Created DMG, signed DMG, notarized (Accepted), stapled
+   - Created GitHub release with assets
+   - Updated Homebrew tap
+
+5. **Homebrew SHA mismatch**:
+   - `gh release upload` corrupted the `MDPreview-1.4.0.dmg` upload (2,219,447→2,193,792 bytes)
+   - GitHub CDN cached the corrupted file
+   - `MDPreview.dmg` (non-versioned) was uploaded correctly and passes notarization
+   - Fixed by changing cask URL to `MDPreview.dmg` instead of `MDPreview-#{version}.dmg`
+   - `brew upgrade` succeeded
+
+6. **Current bug: Cmd+O doesn't work in new windows**:
+   - User reported that after Cmd+N (new window), Cmd+O might not work
+   - Root cause: `@FocusedObject` requires SwiftUI focus within the window, new windows don't have this established
+   - Attempted fix: Change to `@FocusedSceneObject` + `focusedSceneObject` - but `@FocusedSceneObject` is "unknown attribute" in the current SDK (Xcode 26.3 RC)
+   - Current state: Changed `focusedObject` to `focusedSceneValue` in WindowRoot and `@FocusedObject` to `@FocusedValue(\.workspace)` in AppCommands, but haven't built/verified yet
+   - Also need to add `FocusedValues` extension for the custom key
+
+The last action was partially done - changed `@FocusedValue(\.workspace)` in AppCommands but need to:
+1. Change `.focusedObject(workspace)` → `.focusedSceneValue(\.workspace, workspace)` in WindowRoot
+2. Add FocusedValues extension with WorkspaceFocusKey
+
+Wait, actually I see that I already changed `.focusedObject(workspace)` to `.focusedSceneValue` in WindowRoot (I did `focusedSceneObject` then there was an error). Let me re-check the order of edits...
+
+Actually:
+1. Changed `.focusedObject(workspace)` to `.focusedSceneObject(workspace)` in WindowRoot
+2. Changed `@FocusedObject` to `@FocusedSceneObject` in AppCommands  
+3. Build failed: `@FocusedSceneObject` unknown
+4. Changed `@FocusedSceneObject` to `@FocusedValue(\.workspace)` in AppCommands
+5. But WindowRoot still has `.focusedSceneObject(workspace)` which also won't compile
+
+The conversation ended here - still need to fix WindowRoot's modifier and add FocusedValues extension.
+
+Actually, looking at the last assistant response - it only changed `@FocusedSceneObject` to `@FocusedValue(\.workspace)` in AppCommands. The WindowRoot still has `.focusedSceneObject(workspace)` from a previous edit. AND there's no FocusedValues extension defined yet for the custom `workspace` key.
+
+This is the current pending work - the fix is incomplete.
+
+ to `\Analysis:
+Let me analyze the conversation chronologically:
+
+1. **Initial request**: User asked to implement a comprehensive plan for MDPreview app with 5 features: anchor link fix, KaTeX math rendering, Mermaid diagrams, custom CSS, and link validation.
+
+2. **Plan implementation**:
+   - Read key files: template.html, MarkdownWebView.swift, Workspace.swift, MDPreviewApp.swift, MainView.swift, download-deps.sh, Package.swift, existing tests
+   - Fixed download-deps.sh path bug (was `Sources/MDPreview/Resources`, should be `Sources/MDPreviewCore/Resources`)
+   - Downloaded KaTeX 0.16.21 (js, css, fonts) and Mermaid 11.4.1
+   - Rewrote template.html with all 5 features
+   - Updated MarkdownWebView.swift with customCSS param, fragment handling, extractLocalLinks, scrollToAnchor fix
+   - Updated Workspace.swift with customCSS state management
+   - Updated MainView.swift to pass customCSS
+   - Updated MDPreviewApp.swift with fragment handling and Custom Stylesheet menu
+   - Added new test files: LinkValidationTests.swift, CustomCSSTests.swift
+   - Added new tests to MarkdownRenderingTests.swift
+
+3. **Test failures**:
+   - `testInitialCustomCSSIsEmpty` failed because `@AppStorage("customCSSPath")` persisted between tests
+   - `testCSSLiveReload` failed because used wrong notification observer (needed Combine)
+   - Fixed by adding `UserDefaults.standard.removeObject(forKey: "customCSSPath")` in setUp/tearDown and using Combine's `$customCSS` publisher
+
+4. **Release v1.4.0**:
+   - Bumped version to 1.4.0 in Info.plist and Supporting/mdpreview
+   - Built universal binary (arm64 + x86_64) with lipo
+   - Created app bundle with all resources
+   - Signed with Developer ID
+   - Created DMG, signed DMG, notarized (Accepted), stapled
+   - Created GitHub release with assets
+   - Updated Homebrew tap
+
+5. **Homebrew SHA mismatch**:
+   - `gh release upload` corrupted the `MDPreview-1.4.0.dmg` upload (2,219,447→2,193,792 bytes)
+   - GitHub CDN cached the corrupted file
+   - `MDPreview.dmg` (non-versioned) was uploaded correctly and passes notarization
+   - Fixed by changing cask URL to `MDPreview.dmg` instead of `MDPreview-#{version}.dmg`
+   - `brew upgrade` succeeded
+
+6. **Current bug: Cmd+O doesn't work in new windows**:
+   - User reported that after Cmd+N (new window), Cmd+O might not work
+   - Root cause: `@FocusedObject` requires SwiftUI focus within the window, new windows don't have this established
+   - Attempted fix: Change to `@FocusedSceneObject` + `focusedSceneObject` - but `@FocusedSceneObject` is "unknown attribute" in the current SDK (Xcode 26.3 RC)
+   - Current state: Changed `focusedObject` to `focusedSceneValue` in WindowRoot and `@FocusedObject` to `@FocusedValue(\.workspace)` in AppCommands, but haven't built/verified yet
+   - Also need to add `FocusedValues` extension for the custom key
+
+The last action was partially done - changed `@FocusedValue(\.workspace)` in AppCommands but need to:
+1. Change `.focusedObject(workspace)` → `.focusedSceneValue(\.workspace, workspace)` in WindowRoot
+2. Add FocusedValues extension with WorkspaceFocusKey
+
+Wait, actually I see that I already changed `.focusedObject(workspace)` to `.focusedSceneValue` in WindowRoot (I did `focusedSceneObject` then there was an error). Let me re-check the order of edits...
+
+Actually:
+1. Changed `.focusedObject(workspace)` to `.focusedSceneObject(workspace)` in WindowRoot
+2. Changed `@FocusedObject` to `@FocusedSceneObject` in AppCommands  
+3. Build failed: `@FocusedSceneObject` unknown
+4. Changed `@FocusedSceneObject` to `@FocusedValue(\.workspace)` in AppCommands
+5. But WindowRoot still has `.focusedSceneObject(workspace)` which also won't compile
+
+The conversation ended here - still need to fix WindowRoot's modifier and add FocusedValues extension.
+
+Actually, looking at the last assistant response - it only changed `@FocusedSceneObject` to `@FocusedValue(\.workspace)` in AppCommands. The WindowRoot still has `.focusedSceneObject(workspace)` from a previous edit. AND there's no FocusedValues extension defined yet for the custom `workspace` key.
+
+This is the current pending work - the fix is incomplete.
+
+; in JS template literals `\Analysis:
+Let me analyze the conversation chronologically:
+
+1. **Initial request**: User asked to implement a comprehensive plan for MDPreview app with 5 features: anchor link fix, KaTeX math rendering, Mermaid diagrams, custom CSS, and link validation.
+
+2. **Plan implementation**:
+   - Read key files: template.html, MarkdownWebView.swift, Workspace.swift, MDPreviewApp.swift, MainView.swift, download-deps.sh, Package.swift, existing tests
+   - Fixed download-deps.sh path bug (was `Sources/MDPreview/Resources`, should be `Sources/MDPreviewCore/Resources`)
+   - Downloaded KaTeX 0.16.21 (js, css, fonts) and Mermaid 11.4.1
+   - Rewrote template.html with all 5 features
+   - Updated MarkdownWebView.swift with customCSS param, fragment handling, extractLocalLinks, scrollToAnchor fix
+   - Updated Workspace.swift with customCSS state management
+   - Updated MainView.swift to pass customCSS
+   - Updated MDPreviewApp.swift with fragment handling and Custom Stylesheet menu
+   - Added new test files: LinkValidationTests.swift, CustomCSSTests.swift
+   - Added new tests to MarkdownRenderingTests.swift
+
+3. **Test failures**:
+   - `testInitialCustomCSSIsEmpty` failed because `@AppStorage("customCSSPath")` persisted between tests
+   - `testCSSLiveReload` failed because used wrong notification observer (needed Combine)
+   - Fixed by adding `UserDefaults.standard.removeObject(forKey: "customCSSPath")` in setUp/tearDown and using Combine's `$customCSS` publisher
+
+4. **Release v1.4.0**:
+   - Bumped version to 1.4.0 in Info.plist and Supporting/mdpreview
+   - Built universal binary (arm64 + x86_64) with lipo
+   - Created app bundle with all resources
+   - Signed with Developer ID
+   - Created DMG, signed DMG, notarized (Accepted), stapled
+   - Created GitHub release with assets
+   - Updated Homebrew tap
+
+5. **Homebrew SHA mismatch**:
+   - `gh release upload` corrupted the `MDPreview-1.4.0.dmg` upload (2,219,447→2,193,792 bytes)
+   - GitHub CDN cached the corrupted file
+   - `MDPreview.dmg` (non-versioned) was uploaded correctly and passes notarization
+   - Fixed by changing cask URL to `MDPreview.dmg` instead of `MDPreview-#{version}.dmg`
+   - `brew upgrade` succeeded
+
+6. **Current bug: Cmd+O doesn't work in new windows**:
+   - User reported that after Cmd+N (new window), Cmd+O might not work
+   - Root cause: `@FocusedObject` requires SwiftUI focus within the window, new windows don't have this established
+   - Attempted fix: Change to `@FocusedSceneObject` + `focusedSceneObject` - but `@FocusedSceneObject` is "unknown attribute" in the current SDK (Xcode 26.3 RC)
+   - Current state: Changed `focusedObject` to `focusedSceneValue` in WindowRoot and `@FocusedObject` to `@FocusedValue(\.workspace)` in AppCommands, but haven't built/verified yet
+   - Also need to add `FocusedValues` extension for the custom key
+
+The last action was partially done - changed `@FocusedValue(\.workspace)` in AppCommands but need to:
+1. Change `.focusedObject(workspace)` → `.focusedSceneValue(\.workspace, workspace)` in WindowRoot
+2. Add FocusedValues extension with WorkspaceFocusKey
+
+Wait, actually I see that I already changed `.focusedObject(workspace)` to `.focusedSceneValue` in WindowRoot (I did `focusedSceneObject` then there was an error). Let me re-check the order of edits...
+
+Actually:
+1. Changed `.focusedObject(workspace)` to `.focusedSceneObject(workspace)` in WindowRoot
+2. Changed `@FocusedObject` to `@FocusedSceneObject` in AppCommands  
+3. Build failed: `@FocusedSceneObject` unknown
+4. Changed `@FocusedSceneObject` to `@FocusedValue(\.workspace)` in AppCommands
+5. But WindowRoot still has `.focusedSceneObject(workspace)` which also won't compile
+
+The conversation ended here - still need to fix WindowRoot's modifier and add FocusedValues extension.
+
+Actually, looking at the last assistant response - it only changed `@FocusedSceneObject` to `@FocusedValue(\.workspace)` in AppCommands. The WindowRoot still has `.focusedSceneObject(workspace)` from a previous edit. AND there's no FocusedValues extension defined yet for the custom `workspace` key.
+
+This is the current pending work - the fix is incomplete.
+
+ becomes `Analysis:
+Let me analyze the conversation chronologically:
+
+1. **Initial request**: User asked to implement a comprehensive plan for MDPreview app with 5 features: anchor link fix, KaTeX math rendering, Mermaid diagrams, custom CSS, and link validation.
+
+2. **Plan implementation**:
+   - Read key files: template.html, MarkdownWebView.swift, Workspace.swift, MDPreviewApp.swift, MainView.swift, download-deps.sh, Package.swift, existing tests
+   - Fixed download-deps.sh path bug (was `Sources/MDPreview/Resources`, should be `Sources/MDPreviewCore/Resources`)
+   - Downloaded KaTeX 0.16.21 (js, css, fonts) and Mermaid 11.4.1
+   - Rewrote template.html with all 5 features
+   - Updated MarkdownWebView.swift with customCSS param, fragment handling, extractLocalLinks, scrollToAnchor fix
+   - Updated Workspace.swift with customCSS state management
+   - Updated MainView.swift to pass customCSS
+   - Updated MDPreviewApp.swift with fragment handling and Custom Stylesheet menu
+   - Added new test files: LinkValidationTests.swift, CustomCSSTests.swift
+   - Added new tests to MarkdownRenderingTests.swift
+
+3. **Test failures**:
+   - `testInitialCustomCSSIsEmpty` failed because `@AppStorage("customCSSPath")` persisted between tests
+   - `testCSSLiveReload` failed because used wrong notification observer (needed Combine)
+   - Fixed by adding `UserDefaults.standard.removeObject(forKey: "customCSSPath")` in setUp/tearDown and using Combine's `$customCSS` publisher
+
+4. **Release v1.4.0**:
+   - Bumped version to 1.4.0 in Info.plist and Supporting/mdpreview
+   - Built universal binary (arm64 + x86_64) with lipo
+   - Created app bundle with all resources
+   - Signed with Developer ID
+   - Created DMG, signed DMG, notarized (Accepted), stapled
+   - Created GitHub release with assets
+   - Updated Homebrew tap
+
+5. **Homebrew SHA mismatch**:
+   - `gh release upload` corrupted the `MDPreview-1.4.0.dmg` upload (2,219,447→2,193,792 bytes)
+   - GitHub CDN cached the corrupted file
+   - `MDPreview.dmg` (non-versioned) was uploaded correctly and passes notarization
+   - Fixed by changing cask URL to `MDPreview.dmg` instead of `MDPreview-#{version}.dmg`
+   - `brew upgrade` succeeded
+
+6. **Current bug: Cmd+O doesn't work in new windows**:
+   - User reported that after Cmd+N (new window), Cmd+O might not work
+   - Root cause: `@FocusedObject` requires SwiftUI focus within the window, new windows don't have this established
+   - Attempted fix: Change to `@FocusedSceneObject` + `focusedSceneObject` - but `@FocusedSceneObject` is "unknown attribute" in the current SDK (Xcode 26.3 RC)
+   - Current state: Changed `focusedObject` to `focusedSceneValue` in WindowRoot and `@FocusedObject` to `@FocusedValue(\.workspace)` in AppCommands, but haven't built/verified yet
+   - Also need to add `FocusedValues` extension for the custom key
+
+The last action was partially done - changed `@FocusedValue(\.workspace)` in AppCommands but need to:
+1. Change `.focusedObject(workspace)` → `.focusedSceneValue(\.workspace, workspace)` in WindowRoot
+2. Add FocusedValues extension with WorkspaceFocusKey
+
+Wait, actually I see that I already changed `.focusedObject(workspace)` to `.focusedSceneValue` in WindowRoot (I did `focusedSceneObject` then there was an error). Let me re-check the order of edits...
+
+Actually:
+1. Changed `.focusedObject(workspace)` to `.focusedSceneObject(workspace)` in WindowRoot
+2. Changed `@FocusedObject` to `@FocusedSceneObject` in AppCommands  
+3. Build failed: `@FocusedSceneObject` unknown
+4. Changed `@FocusedSceneObject` to `@FocusedValue(\.workspace)` in AppCommands
+5. But WindowRoot still has `.focusedSceneObject(workspace)` which also won't compile
+
+The conversation ended here - still need to fix WindowRoot's modifier and add FocusedValues extension.
+
+Actually, looking at the last assistant response - it only changed `@FocusedSceneObject` to `@FocusedValue(\.workspace)` in AppCommands. The WindowRoot still has `.focusedSceneObject(workspace)` from a previous edit. AND there's no FocusedValues extension defined yet for the custom `workspace` key.
+
+This is the current pending work - the fix is incomplete.
+
+, so KaTeX receives correct delimiters.
+   - **`@AppStorage` in ObservableObject**: Persists across test runs — must call `UserDefaults.standard.removeObject(forKey:)` in test `setUp`/`tearDown`.
+   - **Homebrew CDN caching**: GitHub CDN can cache corrupted uploads; workaround is to use a different filename that wasn't cached.
+   - **Universal binary**: Built with `swift build -c release --arch arm64` + `--arch x86_64`, combined with `lipo -create`.
+   - **Notarization flow**: Sign app → Create DMG → Sign DMG → `xcrun notarytool submit --wait` → `xcrun stapler staple`.
+
+3. Files and Code Sections:
+   - **`Sources/MDPreviewCore/Resources/template.html`** (complete rewrite):
+     - Added `<link rel="stylesheet" href="katex.min.css">`, `<script src="katex.min.js">`, `<script src="auto-render.min.js">`, `<script src="mermaid.min.js">`
+     - JS click interceptor for `#anchor` links (prevents page reload):
+       ```js
+       document.addEventListener('click', function(e) {
+           var target = e.target;
+           while (target && target.tagName !== 'A') target = target.parentElement;
+           if (!target) return;
+           var href = target.getAttribute('href');
+           if (href && href.startsWith('#')) {
+               e.preventDefault();
+               scrollToAnchor(href.slice(1));
+           }
+       }, true);
+       ```
+     - In `render()`: Added KaTeX `renderMathInElement(...)`, Mermaid block conversion + `mermaid.run()`, syntax highlighting skips `.language-mermaid`
+     - New JS functions: `markBrokenLinks(brokenURLs)`, `applyCustomCSS(css)`
+     - New CSS: `.katex { color: inherit; }`, `.mermaid { text-align: center; }`, `a.broken-link { text-decoration: underline wavy #d1242f; }`
+
+   - **`Sources/MDPreviewCore/MarkdownWebView.swift`** (major update):
+     - Added `customCSS: String` parameter to struct and `init`
+     - `Coordinator` additions: `pendingCSS: String = ""`, `currentCustomCSS: String = ""`
+     - `updateNSView`: calls `evaluateApplyCustomCSS` when `customCSS` changes; sets `pendingCSS` when not loaded
+     - Fixed `scrollToAnchor` — replaced `addingPercentEncoding(withAllowedCharacters: .alphanumerics)` with JS string escaping (was breaking hyphenated IDs):
+       ```swift
+       let escapedAnchor = anchor
+           .replacingOccurrences(of: "\\", with: "\\\\")
+           .replacingOccurrences(of: "'", with: "\\'")
+       webView.evaluateJavaScript("scrollToAnchor('\(escapedAnchor)')")
+       ```
+     - `decidePolicyFor`: extracts `url.fragment`, creates clean `fileURL = URL(fileURLWithPath: url.path)`, posts `userInfo: ["fragment": fragment]`
+     - `evaluateRender`: after `render(...)` call, also calls `markBrokenLinks(...)` with absolute `file://base/path` URLs
+     - `didFinish`: applies `pendingCSS` via `applyCustomCSS(...)` and calls `markBrokenLinks(...)`
+     - New static method:
+       ```swift
+       public static func extractLocalLinks(in markdown: String, baseURL: URL) -> [String]
+       ```
+       Uses regex `(?<!!)\[[^\]]*\]\(([^)#:\s][^)]*)\)`, filters external/absolute URLs, strips fragments, checks `FileManager.fileExists`.
+
+   - **`Sources/MDPreviewCore/Workspace.swift`** (additions):
+     - `@AppStorage("customCSSPath") private var storedCustomCSSPath: String = ""`
+     - `@Published public var customCSS: String = ""`
+     - `private let cssWatcher = FileWatcher()`
+     - `init()` now calls `loadCustomCSSFromPath(storedCustomCSSPath)` if path is non-empty
+     - `public func setCustomCSSPath(_ path: String)` — sets path, stops old watcher, loads CSS, starts new watcher
+     - `private func loadCustomCSSFromPath(_ path: String)` — reads file, sets `customCSS`, starts `cssWatcher`
+     - `private func reloadCustomCSS()` — called by `cssWatcher` on file change, dispatches to main
+
+   - **`Sources/MDPreviewCore/MainView.swift`**:
+     - `MarkdownWebView(...)` call updated to add `customCSS: workspace.customCSS`
+
+   - **`Sources/MDPreviewCore/MDPreviewApp.swift`**:
+     - `onReceive(.didRequestOpenFile)`: added fragment handling — extracts `notification.userInfo?["fragment"]` and posts `.scrollToAnchor` after 0.3s delay
+     - View menu: added "Custom Stylesheet..." button (calls `chooseCustomStylesheet()`) and "Remove Custom Stylesheet" button (calls `workspace?.setCustomCSSPath("")`)
+     - Added `chooseCustomStylesheet()` private method with `NSOpenPanel`
+     - **In progress fix for Cmd+O bug**:
+       - `WindowRoot`: changed `.focusedObject(workspace)` → `.focusedSceneObject(workspace)` (then build failed)
+       - `AppCommands`: changed `@FocusedObject` → `@FocusedSceneObject` (build failed: "unknown attribute")
+       - Then changed `@FocusedSceneObject` → `@FocusedValue(\.workspace)` (last edit before summary request)
+       - WindowRoot still has `.focusedSceneObject(workspace)` — needs to change to `.focusedSceneValue(\.workspace, workspace)`
+       - Missing: `FocusedValues` extension with `WorkspaceFocusKey`
+
+   - **`Scripts/download-deps.sh`** (fixed + expanded):
+     - Fixed path: `RESOURCES="Sources/MDPreviewCore/Resources"` (was `Sources/MDPreview/Resources`)
+     - Added KaTeX 0.16.21 downloads (js, css, auto-render, 20 WOFF2 fonts)
+     - Added Mermaid 11.4.1 download
+
+   - **`Tests/MDPreviewCoreTests/LinkValidationTests.swift`** (new):
+     - Tests for `MarkdownWebView.extractLocalLinks`: missing files, existing files, `./` prefix normalization, image exclusion, external URL exclusion, anchor exclusion, fragment stripping, multiple broken links, absolute path exclusion
+
+   - **`Tests/MDPreviewCoreTests/CustomCSSTests.swift`** (new):
+     - Tests for `Workspace` custom CSS: initial empty state, loading CSS from path, removing CSS, non-existent file handling, live reload via Combine `$customCSS` publisher
+     - Uses `UserDefaults.standard.removeObject(forKey: "customCSSPath")` in setUp/tearDown
+
+   - **`Tests/MDPreviewCoreTests/MarkdownRenderingTests.swift`** (additions):
+     - Bundle existence tests for `katex.min.js`, `katex.min.css`, `auto-render.min.js`, `mermaid.min.js`
+     - Template HTML content tests: KaTeX references, Mermaid references, anchor click interceptor, `markBrokenLinks` function, `applyCustomCSS` function
+
+   - **`Supporting/Info.plist`**: version bumped `1.3.0` → `1.4.0`
+   - **`Supporting/mdpreview`**: `VERSION="1.3.0"` → `VERSION="1.4.0"`
+   - **`~/homebrew-tap/Casks/mdpreview.rb`**: version `1.4.0`, sha256 `6b4139fb636c82da58724155051aef90534cccbaffe933ef37049c53511c86c8`, URL changed to `MDPreview.dmg` (no version in filename)
+
+4. Errors and Fixes:
+   - **Test failure `testInitialCustomCSSIsEmpty`**: `@AppStorage("customCSSPath")` persisted between test runs. Fixed by adding `UserDefaults.standard.removeObject(forKey: "customCSSPath")` in `setUp()` and `tearDown()`.
+   - **Test failure `testCSSLiveReload`**: Used `NotificationCenter.addObserver(forName: nil, ...)` which doesn't observe `@Published` changes. Fixed by using Combine: `workspace.$customCSS.dropFirst().sink { ... }`.
+   - **`@FocusedSceneObject` unknown attribute**: SDK (Xcode 26.3 RC) doesn't expose this as a property wrapper. Pivoting to `@FocusedValue(\.workspace)` + `focusedSceneValue` approach with custom `FocusedValueKey`.
+   - **Homebrew SHA mismatch**: `gh release upload` uploaded a truncated/corrupted `MDPreview-1.4.0.dmg` (2,193,792 bytes instead of 2,219,447 bytes). GitHub CDN cached the bad file. `spctl` confirmed the downloaded file had "no usable signature". The `MDPreview.dmg` (non-versioned, uploaded as first asset) was correct and notarized. Fixed by changing the Homebrew cask URL from `MDPreview-#{version}.dmg` to `MDPreview.dmg`.
+   - **`build/MDPreview.dmg` was a directory**: On first `hdiutil create` attempt, failed with "file exists". Found the path was a directory; used `rm -rf` to remove and recreated.
+   - **lipo wrong binary path**: `find` found dSYM binary instead of actual binary. Fixed by using explicit paths `.build/arm64-apple-macosx/release/MDPreview` and `.build/x86_64-apple-macosx/release/MDPreview`.
+
+5. Problem Solving:
+   - **Anchor link reload bug**: JS click interceptor in template.html prevents browser navigation for `href="#..."` links, calling `scrollToAnchor` directly instead.
+   - **Cross-document fragment links**: Swift `URL.path` and `URL.fragment` are separate, so `url.path` gives the clean file path and `url.fragment` gives the anchor. Passed via `userInfo["fragment"]` in notification, with 0.3s async delay for scrolling.
+   - **`scrollToAnchor` hyphen bug**: `addingPercentEncoding(withAllowedCharacters: .alphanumerics)` encodes `-` as `%2D`, breaking IDs like `hello-world`. Fixed with JS string escaping only.
+   - **KaTeX `Analysis:
+Let me analyze the conversation chronologically:
+
+1. **Initial request**: User asked to implement a comprehensive plan for MDPreview app with 5 features: anchor link fix, KaTeX math rendering, Mermaid diagrams, custom CSS, and link validation.
+
+2. **Plan implementation**:
+   - Read key files: template.html, MarkdownWebView.swift, Workspace.swift, MDPreviewApp.swift, MainView.swift, download-deps.sh, Package.swift, existing tests
+   - Fixed download-deps.sh path bug (was `Sources/MDPreview/Resources`, should be `Sources/MDPreviewCore/Resources`)
+   - Downloaded KaTeX 0.16.21 (js, css, fonts) and Mermaid 11.4.1
+   - Rewrote template.html with all 5 features
+   - Updated MarkdownWebView.swift with customCSS param, fragment handling, extractLocalLinks, scrollToAnchor fix
+   - Updated Workspace.swift with customCSS state management
+   - Updated MainView.swift to pass customCSS
+   - Updated MDPreviewApp.swift with fragment handling and Custom Stylesheet menu
+   - Added new test files: LinkValidationTests.swift, CustomCSSTests.swift
+   - Added new tests to MarkdownRenderingTests.swift
+
+3. **Test failures**:
+   - `testInitialCustomCSSIsEmpty` failed because `@AppStorage("customCSSPath")` persisted between tests
+   - `testCSSLiveReload` failed because used wrong notification observer (needed Combine)
+   - Fixed by adding `UserDefaults.standard.removeObject(forKey: "customCSSPath")` in setUp/tearDown and using Combine's `$customCSS` publisher
+
+4. **Release v1.4.0**:
+   - Bumped version to 1.4.0 in Info.plist and Supporting/mdpreview
+   - Built universal binary (arm64 + x86_64) with lipo
+   - Created app bundle with all resources
+   - Signed with Developer ID
+   - Created DMG, signed DMG, notarized (Accepted), stapled
+   - Created GitHub release with assets
+   - Updated Homebrew tap
+
+5. **Homebrew SHA mismatch**:
+   - `gh release upload` corrupted the `MDPreview-1.4.0.dmg` upload (2,219,447→2,193,792 bytes)
+   - GitHub CDN cached the corrupted file
+   - `MDPreview.dmg` (non-versioned) was uploaded correctly and passes notarization
+   - Fixed by changing cask URL to `MDPreview.dmg` instead of `MDPreview-#{version}.dmg`
+   - `brew upgrade` succeeded
+
+6. **Current bug: Cmd+O doesn't work in new windows**:
+   - User reported that after Cmd+N (new window), Cmd+O might not work
+   - Root cause: `@FocusedObject` requires SwiftUI focus within the window, new windows don't have this established
+   - Attempted fix: Change to `@FocusedSceneObject` + `focusedSceneObject` - but `@FocusedSceneObject` is "unknown attribute" in the current SDK (Xcode 26.3 RC)
+   - Current state: Changed `focusedObject` to `focusedSceneValue` in WindowRoot and `@FocusedObject` to `@FocusedValue(\.workspace)` in AppCommands, but haven't built/verified yet
+   - Also need to add `FocusedValues` extension for the custom key
+
+The last action was partially done - changed `@FocusedValue(\.workspace)` in AppCommands but need to:
+1. Change `.focusedObject(workspace)` → `.focusedSceneValue(\.workspace, workspace)` in WindowRoot
+2. Add FocusedValues extension with WorkspaceFocusKey
+
+Wait, actually I see that I already changed `.focusedObject(workspace)` to `.focusedSceneValue` in WindowRoot (I did `focusedSceneObject` then there was an error). Let me re-check the order of edits...
+
+Actually:
+1. Changed `.focusedObject(workspace)` to `.focusedSceneObject(workspace)` in WindowRoot
+2. Changed `@FocusedObject` to `@FocusedSceneObject` in AppCommands  
+3. Build failed: `@FocusedSceneObject` unknown
+4. Changed `@FocusedSceneObject` to `@FocusedValue(\.workspace)` in AppCommands
+5. But WindowRoot still has `.focusedSceneObject(workspace)` which also won't compile
+
+The conversation ended here - still need to fix WindowRoot's modifier and add FocusedValues extension.
+
+Actually, looking at the last assistant response - it only changed `@FocusedSceneObject` to `@FocusedValue(\.workspace)` in AppCommands. The WindowRoot still has `.focusedSceneObject(workspace)` from a previous edit. AND there's no FocusedValues extension defined yet for the custom `workspace` key.
+
+This is the current pending work - the fix is incomplete.
+
+ escaping**: `escapeForJavaScript` converts `Analysis:
+Let me analyze the conversation chronologically:
+
+1. **Initial request**: User asked to implement a comprehensive plan for MDPreview app with 5 features: anchor link fix, KaTeX math rendering, Mermaid diagrams, custom CSS, and link validation.
+
+2. **Plan implementation**:
+   - Read key files: template.html, MarkdownWebView.swift, Workspace.swift, MDPreviewApp.swift, MainView.swift, download-deps.sh, Package.swift, existing tests
+   - Fixed download-deps.sh path bug (was `Sources/MDPreview/Resources`, should be `Sources/MDPreviewCore/Resources`)
+   - Downloaded KaTeX 0.16.21 (js, css, fonts) and Mermaid 11.4.1
+   - Rewrote template.html with all 5 features
+   - Updated MarkdownWebView.swift with customCSS param, fragment handling, extractLocalLinks, scrollToAnchor fix
+   - Updated Workspace.swift with customCSS state management
+   - Updated MainView.swift to pass customCSS
+   - Updated MDPreviewApp.swift with fragment handling and Custom Stylesheet menu
+   - Added new test files: LinkValidationTests.swift, CustomCSSTests.swift
+   - Added new tests to MarkdownRenderingTests.swift
+
+3. **Test failures**:
+   - `testInitialCustomCSSIsEmpty` failed because `@AppStorage("customCSSPath")` persisted between tests
+   - `testCSSLiveReload` failed because used wrong notification observer (needed Combine)
+   - Fixed by adding `UserDefaults.standard.removeObject(forKey: "customCSSPath")` in setUp/tearDown and using Combine's `$customCSS` publisher
+
+4. **Release v1.4.0**:
+   - Bumped version to 1.4.0 in Info.plist and Supporting/mdpreview
+   - Built universal binary (arm64 + x86_64) with lipo
+   - Created app bundle with all resources
+   - Signed with Developer ID
+   - Created DMG, signed DMG, notarized (Accepted), stapled
+   - Created GitHub release with assets
+   - Updated Homebrew tap
+
+5. **Homebrew SHA mismatch**:
+   - `gh release upload` corrupted the `MDPreview-1.4.0.dmg` upload (2,219,447→2,193,792 bytes)
+   - GitHub CDN cached the corrupted file
+   - `MDPreview.dmg` (non-versioned) was uploaded correctly and passes notarization
+   - Fixed by changing cask URL to `MDPreview.dmg` instead of `MDPreview-#{version}.dmg`
+   - `brew upgrade` succeeded
+
+6. **Current bug: Cmd+O doesn't work in new windows**:
+   - User reported that after Cmd+N (new window), Cmd+O might not work
+   - Root cause: `@FocusedObject` requires SwiftUI focus within the window, new windows don't have this established
+   - Attempted fix: Change to `@FocusedSceneObject` + `focusedSceneObject` - but `@FocusedSceneObject` is "unknown attribute" in the current SDK (Xcode 26.3 RC)
+   - Current state: Changed `focusedObject` to `focusedSceneValue` in WindowRoot and `@FocusedObject` to `@FocusedValue(\.workspace)` in AppCommands, but haven't built/verified yet
+   - Also need to add `FocusedValues` extension for the custom key
+
+The last action was partially done - changed `@FocusedValue(\.workspace)` in AppCommands but need to:
+1. Change `.focusedObject(workspace)` → `.focusedSceneValue(\.workspace, workspace)` in WindowRoot
+2. Add FocusedValues extension with WorkspaceFocusKey
+
+Wait, actually I see that I already changed `.focusedObject(workspace)` to `.focusedSceneValue` in WindowRoot (I did `focusedSceneObject` then there was an error). Let me re-check the order of edits...
+
+Actually:
+1. Changed `.focusedObject(workspace)` to `.focusedSceneObject(workspace)` in WindowRoot
+2. Changed `@FocusedObject` to `@FocusedSceneObject` in AppCommands  
+3. Build failed: `@FocusedSceneObject` unknown
+4. Changed `@FocusedSceneObject` to `@FocusedValue(\.workspace)` in AppCommands
+5. But WindowRoot still has `.focusedSceneObject(workspace)` which also won't compile
+
+The conversation ended here - still need to fix WindowRoot's modifier and add FocusedValues extension.
+
+Actually, looking at the last assistant response - it only changed `@FocusedSceneObject` to `@FocusedValue(\.workspace)` in AppCommands. The WindowRoot still has `.focusedSceneObject(workspace)` from a previous edit. AND there's no FocusedValues extension defined yet for the custom `workspace` key.
+
+This is the current pending work - the fix is incomplete.
+
+ → `\Analysis:
+Let me analyze the conversation chronologically:
+
+1. **Initial request**: User asked to implement a comprehensive plan for MDPreview app with 5 features: anchor link fix, KaTeX math rendering, Mermaid diagrams, custom CSS, and link validation.
+
+2. **Plan implementation**:
+   - Read key files: template.html, MarkdownWebView.swift, Workspace.swift, MDPreviewApp.swift, MainView.swift, download-deps.sh, Package.swift, existing tests
+   - Fixed download-deps.sh path bug (was `Sources/MDPreview/Resources`, should be `Sources/MDPreviewCore/Resources`)
+   - Downloaded KaTeX 0.16.21 (js, css, fonts) and Mermaid 11.4.1
+   - Rewrote template.html with all 5 features
+   - Updated MarkdownWebView.swift with customCSS param, fragment handling, extractLocalLinks, scrollToAnchor fix
+   - Updated Workspace.swift with customCSS state management
+   - Updated MainView.swift to pass customCSS
+   - Updated MDPreviewApp.swift with fragment handling and Custom Stylesheet menu
+   - Added new test files: LinkValidationTests.swift, CustomCSSTests.swift
+   - Added new tests to MarkdownRenderingTests.swift
+
+3. **Test failures**:
+   - `testInitialCustomCSSIsEmpty` failed because `@AppStorage("customCSSPath")` persisted between tests
+   - `testCSSLiveReload` failed because used wrong notification observer (needed Combine)
+   - Fixed by adding `UserDefaults.standard.removeObject(forKey: "customCSSPath")` in setUp/tearDown and using Combine's `$customCSS` publisher
+
+4. **Release v1.4.0**:
+   - Bumped version to 1.4.0 in Info.plist and Supporting/mdpreview
+   - Built universal binary (arm64 + x86_64) with lipo
+   - Created app bundle with all resources
+   - Signed with Developer ID
+   - Created DMG, signed DMG, notarized (Accepted), stapled
+   - Created GitHub release with assets
+   - Updated Homebrew tap
+
+5. **Homebrew SHA mismatch**:
+   - `gh release upload` corrupted the `MDPreview-1.4.0.dmg` upload (2,219,447→2,193,792 bytes)
+   - GitHub CDN cached the corrupted file
+   - `MDPreview.dmg` (non-versioned) was uploaded correctly and passes notarization
+   - Fixed by changing cask URL to `MDPreview.dmg` instead of `MDPreview-#{version}.dmg`
+   - `brew upgrade` succeeded
+
+6. **Current bug: Cmd+O doesn't work in new windows**:
+   - User reported that after Cmd+N (new window), Cmd+O might not work
+   - Root cause: `@FocusedObject` requires SwiftUI focus within the window, new windows don't have this established
+   - Attempted fix: Change to `@FocusedSceneObject` + `focusedSceneObject` - but `@FocusedSceneObject` is "unknown attribute" in the current SDK (Xcode 26.3 RC)
+   - Current state: Changed `focusedObject` to `focusedSceneValue` in WindowRoot and `@FocusedObject` to `@FocusedValue(\.workspace)` in AppCommands, but haven't built/verified yet
+   - Also need to add `FocusedValues` extension for the custom key
+
+The last action was partially done - changed `@FocusedValue(\.workspace)` in AppCommands but need to:
+1. Change `.focusedObject(workspace)` → `.focusedSceneValue(\.workspace, workspace)` in WindowRoot
+2. Add FocusedValues extension with WorkspaceFocusKey
+
+Wait, actually I see that I already changed `.focusedObject(workspace)` to `.focusedSceneValue` in WindowRoot (I did `focusedSceneObject` then there was an error). Let me re-check the order of edits...
+
+Actually:
+1. Changed `.focusedObject(workspace)` to `.focusedSceneObject(workspace)` in WindowRoot
+2. Changed `@FocusedObject` to `@FocusedSceneObject` in AppCommands  
+3. Build failed: `@FocusedSceneObject` unknown
+4. Changed `@FocusedSceneObject` to `@FocusedValue(\.workspace)` in AppCommands
+5. But WindowRoot still has `.focusedSceneObject(workspace)` which also won't compile
+
+The conversation ended here - still need to fix WindowRoot's modifier and add FocusedValues extension.
+
+Actually, looking at the last assistant response - it only changed `@FocusedSceneObject` to `@FocusedValue(\.workspace)` in AppCommands. The WindowRoot still has `.focusedSceneObject(workspace)` from a previous edit. AND there's no FocusedValues extension defined yet for the custom `workspace` key.
+
+This is the current pending work - the fix is incomplete.
+
+; in JS template literal `\Analysis:
+Let me analyze the conversation chronologically:
+
+1. **Initial request**: User asked to implement a comprehensive plan for MDPreview app with 5 features: anchor link fix, KaTeX math rendering, Mermaid diagrams, custom CSS, and link validation.
+
+2. **Plan implementation**:
+   - Read key files: template.html, MarkdownWebView.swift, Workspace.swift, MDPreviewApp.swift, MainView.swift, download-deps.sh, Package.swift, existing tests
+   - Fixed download-deps.sh path bug (was `Sources/MDPreview/Resources`, should be `Sources/MDPreviewCore/Resources`)
+   - Downloaded KaTeX 0.16.21 (js, css, fonts) and Mermaid 11.4.1
+   - Rewrote template.html with all 5 features
+   - Updated MarkdownWebView.swift with customCSS param, fragment handling, extractLocalLinks, scrollToAnchor fix
+   - Updated Workspace.swift with customCSS state management
+   - Updated MainView.swift to pass customCSS
+   - Updated MDPreviewApp.swift with fragment handling and Custom Stylesheet menu
+   - Added new test files: LinkValidationTests.swift, CustomCSSTests.swift
+   - Added new tests to MarkdownRenderingTests.swift
+
+3. **Test failures**:
+   - `testInitialCustomCSSIsEmpty` failed because `@AppStorage("customCSSPath")` persisted between tests
+   - `testCSSLiveReload` failed because used wrong notification observer (needed Combine)
+   - Fixed by adding `UserDefaults.standard.removeObject(forKey: "customCSSPath")` in setUp/tearDown and using Combine's `$customCSS` publisher
+
+4. **Release v1.4.0**:
+   - Bumped version to 1.4.0 in Info.plist and Supporting/mdpreview
+   - Built universal binary (arm64 + x86_64) with lipo
+   - Created app bundle with all resources
+   - Signed with Developer ID
+   - Created DMG, signed DMG, notarized (Accepted), stapled
+   - Created GitHub release with assets
+   - Updated Homebrew tap
+
+5. **Homebrew SHA mismatch**:
+   - `gh release upload` corrupted the `MDPreview-1.4.0.dmg` upload (2,219,447→2,193,792 bytes)
+   - GitHub CDN cached the corrupted file
+   - `MDPreview.dmg` (non-versioned) was uploaded correctly and passes notarization
+   - Fixed by changing cask URL to `MDPreview.dmg` instead of `MDPreview-#{version}.dmg`
+   - `brew upgrade` succeeded
+
+6. **Current bug: Cmd+O doesn't work in new windows**:
+   - User reported that after Cmd+N (new window), Cmd+O might not work
+   - Root cause: `@FocusedObject` requires SwiftUI focus within the window, new windows don't have this established
+   - Attempted fix: Change to `@FocusedSceneObject` + `focusedSceneObject` - but `@FocusedSceneObject` is "unknown attribute" in the current SDK (Xcode 26.3 RC)
+   - Current state: Changed `focusedObject` to `focusedSceneValue` in WindowRoot and `@FocusedObject` to `@FocusedValue(\.workspace)` in AppCommands, but haven't built/verified yet
+   - Also need to add `FocusedValues` extension for the custom key
+
+The last action was partially done - changed `@FocusedValue(\.workspace)` in AppCommands but need to:
+1. Change `.focusedObject(workspace)` → `.focusedSceneValue(\.workspace, workspace)` in WindowRoot
+2. Add FocusedValues extension with WorkspaceFocusKey
+
+Wait, actually I see that I already changed `.focusedObject(workspace)` to `.focusedSceneValue` in WindowRoot (I did `focusedSceneObject` then there was an error). Let me re-check the order of edits...
+
+Actually:
+1. Changed `.focusedObject(workspace)` to `.focusedSceneObject(workspace)` in WindowRoot
+2. Changed `@FocusedObject` to `@FocusedSceneObject` in AppCommands  
+3. Build failed: `@FocusedSceneObject` unknown
+4. Changed `@FocusedSceneObject` to `@FocusedValue(\.workspace)` in AppCommands
+5. But WindowRoot still has `.focusedSceneObject(workspace)` which also won't compile
+
+The conversation ended here - still need to fix WindowRoot's modifier and add FocusedValues extension.
+
+Actually, looking at the last assistant response - it only changed `@FocusedSceneObject` to `@FocusedValue(\.workspace)` in AppCommands. The WindowRoot still has `.focusedSceneObject(workspace)` from a previous edit. AND there's no FocusedValues extension defined yet for the custom `workspace` key.
+
+This is the current pending work - the fix is incomplete.
+
+ → `Analysis:
+Let me analyze the conversation chronologically:
+
+1. **Initial request**: User asked to implement a comprehensive plan for MDPreview app with 5 features: anchor link fix, KaTeX math rendering, Mermaid diagrams, custom CSS, and link validation.
+
+2. **Plan implementation**:
+   - Read key files: template.html, MarkdownWebView.swift, Workspace.swift, MDPreviewApp.swift, MainView.swift, download-deps.sh, Package.swift, existing tests
+   - Fixed download-deps.sh path bug (was `Sources/MDPreview/Resources`, should be `Sources/MDPreviewCore/Resources`)
+   - Downloaded KaTeX 0.16.21 (js, css, fonts) and Mermaid 11.4.1
+   - Rewrote template.html with all 5 features
+   - Updated MarkdownWebView.swift with customCSS param, fragment handling, extractLocalLinks, scrollToAnchor fix
+   - Updated Workspace.swift with customCSS state management
+   - Updated MainView.swift to pass customCSS
+   - Updated MDPreviewApp.swift with fragment handling and Custom Stylesheet menu
+   - Added new test files: LinkValidationTests.swift, CustomCSSTests.swift
+   - Added new tests to MarkdownRenderingTests.swift
+
+3. **Test failures**:
+   - `testInitialCustomCSSIsEmpty` failed because `@AppStorage("customCSSPath")` persisted between tests
+   - `testCSSLiveReload` failed because used wrong notification observer (needed Combine)
+   - Fixed by adding `UserDefaults.standard.removeObject(forKey: "customCSSPath")` in setUp/tearDown and using Combine's `$customCSS` publisher
+
+4. **Release v1.4.0**:
+   - Bumped version to 1.4.0 in Info.plist and Supporting/mdpreview
+   - Built universal binary (arm64 + x86_64) with lipo
+   - Created app bundle with all resources
+   - Signed with Developer ID
+   - Created DMG, signed DMG, notarized (Accepted), stapled
+   - Created GitHub release with assets
+   - Updated Homebrew tap
+
+5. **Homebrew SHA mismatch**:
+   - `gh release upload` corrupted the `MDPreview-1.4.0.dmg` upload (2,219,447→2,193,792 bytes)
+   - GitHub CDN cached the corrupted file
+   - `MDPreview.dmg` (non-versioned) was uploaded correctly and passes notarization
+   - Fixed by changing cask URL to `MDPreview.dmg` instead of `MDPreview-#{version}.dmg`
+   - `brew upgrade` succeeded
+
+6. **Current bug: Cmd+O doesn't work in new windows**:
+   - User reported that after Cmd+N (new window), Cmd+O might not work
+   - Root cause: `@FocusedObject` requires SwiftUI focus within the window, new windows don't have this established
+   - Attempted fix: Change to `@FocusedSceneObject` + `focusedSceneObject` - but `@FocusedSceneObject` is "unknown attribute" in the current SDK (Xcode 26.3 RC)
+   - Current state: Changed `focusedObject` to `focusedSceneValue` in WindowRoot and `@FocusedObject` to `@FocusedValue(\.workspace)` in AppCommands, but haven't built/verified yet
+   - Also need to add `FocusedValues` extension for the custom key
+
+The last action was partially done - changed `@FocusedValue(\.workspace)` in AppCommands but need to:
+1. Change `.focusedObject(workspace)` → `.focusedSceneValue(\.workspace, workspace)` in WindowRoot
+2. Add FocusedValues extension with WorkspaceFocusKey
+
+Wait, actually I see that I already changed `.focusedObject(workspace)` to `.focusedSceneValue` in WindowRoot (I did `focusedSceneObject` then there was an error). Let me re-check the order of edits...
+
+Actually:
+1. Changed `.focusedObject(workspace)` to `.focusedSceneObject(workspace)` in WindowRoot
+2. Changed `@FocusedObject` to `@FocusedSceneObject` in AppCommands  
+3. Build failed: `@FocusedSceneObject` unknown
+4. Changed `@FocusedSceneObject` to `@FocusedValue(\.workspace)` in AppCommands
+5. But WindowRoot still has `.focusedSceneObject(workspace)` which also won't compile
+
+The conversation ended here - still need to fix WindowRoot's modifier and add FocusedValues extension.
+
+Actually, looking at the last assistant response - it only changed `@FocusedSceneObject` to `@FocusedValue(\.workspace)` in AppCommands. The WindowRoot still has `.focusedSceneObject(workspace)` from a previous edit. AND there's no FocusedValues extension defined yet for the custom `workspace` key.
+
+This is the current pending work - the fix is incomplete.
+
+, so KaTeX receives correct delimiters.
+   - **Broken link URL matching**: `rewriteRelativePaths` converts relative paths to `file://` absolute URLs in processed markdown. `extractLocalLinks` works on original markdown and returns relative paths. Swift converts to absolute `file://base/path` URLs before passing to `markBrokenLinks` JS function, which matches against `<a href="...">` attributes.
+   - **Cmd+O in new windows**: `@FocusedObject` requires SwiftUI focus in window — new windows (no interaction yet) have nil workspace. Solution: use `focusedSceneValue` (scene-level, no focus required) + `@FocusedValue` + custom `FocusedValueKey`.
+
+6. All User Messages:
+   - "Implement the following plan: [MDPreview 機能追加計画 — comprehensive plan for 5 features]"
+   - "リリースして。skills確認してね"
+   - Error output from `brew upgrade --cask kazu-42/tap/mdpreview` showing SHA-256 mismatch: `Expected: 6b4139fb...` / `Actual: eae095f8...`
+   - "新しいwindowを開いた後に、command Oができないかも"
+
+7. Pending Tasks:
+   - **Complete the Cmd+O fix**: The fix is partially implemented. Need to:
+     1. Add `FocusedValues` extension with custom `WorkspaceFocusKey` to MDPreviewApp.swift
+     2. Change `.focusedSceneObject(workspace)` → `.focusedSceneValue(\.workspace, workspace)` in `WindowRoot`
+     3. Build and verify compiles successfully
+     4. Optionally run tests and release patch
+
+8. Current Work:
+   Fixing `Cmd+O` not working in new windows. Root cause identified: `@FocusedObject` in `AppCommands` returns nil for new windows (no SwiftUI focus established). The fix uses `focusedSceneValue` + `@FocusedValue` with a custom `FocusedValueKey`.
+
+   Current state of `MDPreviewApp.swift`:
+   - `AppCommands` already changed to: `@FocusedValue(\.workspace) private var workspace: Workspace?`
+   - `WindowRoot` still has: `.focusedSceneObject(workspace)` (needs to become `.focusedSceneValue(\.workspace, workspace)`)
+   - Missing `FocusedValues` extension
+
+   Required additions to MDPreviewApp.swift:
+   ```swift
+   // MARK: - Focused Values
+
+   private struct WorkspaceFocusKey: FocusedValueKey {
+       typealias Value = Workspace
+   }
+
+   extension FocusedValues {
+       var workspace: Workspace? {
+           get { self[WorkspaceFocusKey.self] }
+           set { self[WorkspaceFocusKey.self] = newValue }
+       }
+   }
+   ```
+   And in `WindowRoot.body`:
+   ```swift
+   .focusedSceneValue(\.workspace, workspace)
+   // (replacing .focusedSceneObject(workspace))
+   ```
+
+9. Optional Next Step:
+   Complete the Cmd+O fix as described in Current Work. The user reported: "新しいwindowを開いた後に、command Oができないかも" (After opening a new window, Cmd+O might not work).
+
+   The last incomplete edit was changing `@FocusedSceneObject` to `@FocusedValue(\.workspace)` in AppCommands. The next step is to:
+   1. Add the `FocusedValues` extension with `WorkspaceFocusKey` to MDPreviewApp.swift
+   2. Change `.focusedSceneObject(workspace)` to `.focusedSceneValue(\.workspace, workspace)` in `WindowRoot`
+   3. Build to verify, run tests, commit and release as v1.4.1
+
+If you need specific details from before compaction (like exact code snippets, error messages, or content you generated), read the full transcript at: /Users/kazu42/.claude/projects/-Users-kazu42-dev-mdpreview/d169b4f4-088f-453c-a45f-6bcdadd0a97d.jsonl
+Please continue the conversation from where we left off without asking the user any further questions. Continue with the last task that you were asked to work on.
+
+---
+
+macアプリってterminalから操作できない？
+
+---
+
+結構ショートカットがバグったり、挙動が怪しいところあるから、デバッグして欲しい。ブラウザmcpみたいな感じでlLMが操作できたらなと
+
+---
+
+全部のショートカットを総点検してほしい
+
+---
+
+markdownが表示されないことがあるの、原因調べられたりしない？
+
+---
+
+This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation.
+
+Analysis:
+Let me analyze the conversation chronologically:
+
+1. **Session start context**: The conversation resumed from a previous session. The plan file existed with 5 features to implement. The context showed that v1.4.0 had been released with all features, v1.4.1 fixed Cmd+O in new windows, but Cmd+W was still broken. The last incomplete task was fixing the FocusedValue API for the Cmd+O fix.
+
+2. **First message**: The conversation resumed mid-task. The previous session had partially fixed Cmd+O (changed AppCommands to use `@FocusedValue(\.workspace)`) but WindowRoot still had `.focusedSceneObject(workspace)` and there was no FocusedValues extension.
+
+3. **Cmd+O fix completion**: Read MDPreviewApp.swift, found the incomplete state. Added FocusedValues extension with WorkspaceFocusKey, changed `.focusedSceneObject(workspace)` to `.focusedSceneValue(\.workspace, workspace)`. Built successfully, ran tests (94 pass). Released as v1.4.1 via Homebrew.
+
+4. **User asked about terminal control of Mac apps**: General informational question about osascript, `open`, `defaults`, Accessibility API etc.
+
+5. **User asked about shortcut debugging**: User reported shortcuts are buggy and wanted LLM to be able to operate the app (like browser MCP). Led to:
+   - Using osascript/Accessibility API to audit all menu items
+   - Discovering Cmd+W does nothing (system Close takes shortcut, Close Tab has `CmdChar: missing value`)
+   - Fixed by adding NSEvent local monitor in AppDelegate
+   - Added closeCurrentTab/closeAllTabs notifications
+
+6. **Full shortcut audit**: User asked for comprehensive audit. Found:
+   - Next/Prev Tab enabled even with 0-1 tabs
+   - Tab 1-9 all enabled regardless of tab count
+   - Close All Tabs doesn't close window when no tabs
+   - Close Tab/Close All Tabs have no shortcut displayed in menu
+   - Applied `.disabled()` conditions
+   - Added NSMenu patching via `didChangeItemNotification` to show shortcut hints
+
+7. **Markdown not displaying**: User reported markdown sometimes doesn't display. User provided a log file path.
+   - Read the log file
+   - Found `ERROR: No template.html found!` repeatedly from 09:06:52 onwards (Homebrew-installed version)
+   - Root cause: Manual build script copied resources to `Contents/Resources/MDPreviewCore/` but code looks for `Contents/Resources/MDPreview_MDPreviewCore.bundle/Resources/`
+   - The Makefile's `bundle` target correctly copies from `.build/release/*.bundle` but the `universal` target was missing this step
+   - Manual release process also used wrong source path
+   - Fixed: rebuilt app bundle with correct `.bundle` from Swift build output
+   - Also fixed Makefile `universal` target
+   - Released as v1.4.2 (current in-progress)
+
+**Current state**: v1.4.2 has been released to GitHub and the Homebrew tap is being updated.
+
+Key files modified:
+- `Sources/MDPreviewCore/MDPreviewApp.swift` - FocusedValue fix, shortcut disabled states, NSMenu patching
+- `Sources/MDPreviewCore/AppDelegate.swift` - NSEvent monitor, NSMenu shortcut hints
+- `Makefile` - Fixed universal target to copy bundles
+- `Supporting/Info.plist` - Version 1.4.2
+- `Supporting/mdpreview` - Version 1.4.2
+- `~/homebrew-tap/Casks/mdpreview.rb` - Version 1.4.2 SHA
+
+The last action in the conversation was editing the Homebrew tap cask file to update version and SHA for v1.4.2. The `git push` and `brew upgrade` test haven't been done yet.
+
+Summary:
+1. Primary Request and Intent:
+   - **Resume from previous session**: Complete the incomplete Cmd+O fix in new windows (FocusedValue API migration was half-done)
+   - **Terminal Mac app control**: User asked if macOS apps can be controlled from terminal
+   - **Debug shortcuts**: User reported keyboard shortcuts are buggy; also wanted LLM-controllable interface (like browser MCP)
+   - **Full shortcut audit**: User asked for comprehensive inspection of all shortcuts
+   - **Debug markdown not displaying**: User reported markdown sometimes doesn't display; provided a log file at `/Users/kazu42/careshift/nursehappy/mdpreview-2026-02-27_184317.log`
+
+2. Key Technical Concepts:
+   - **SwiftUI `focusedSceneValue` + `FocusedValueKey`**: Scene-level focused value propagation; requires defining a `FocusedValueKey` conformance and extending `FocusedValues`. `@FocusedSceneObject` does not exist in current SDK.
+   - **NSEvent local monitor**: `NSEvent.addLocalMonitorForEvents(matching: .keyDown)` intercepts key events before the menu system processes them. Returning `nil` consumes the event.
+   - **Shortcut conflict with system menu**: SwiftUI drops shortcut registration for `Close Tab (⌘W)` because WindowGroup auto-registers a competing system `Close (⌘W)` item. Result: `CmdChar: missing value` in accessibility tree.
+   - **NSMenu direct manipulation**: Setting `keyEquivalent` and `keyEquivalentModifierMask` directly on `NSMenuItem` to display shortcut hints. Must re-apply via `NSMenu.didChangeItemNotification` since SwiftUI rebuilds menus on state changes.
+   - **AXMenuItemCmdModifiers bitmask**: 0=Cmd, 1=Shift+Cmd, 2=Option+Cmd, 4=Ctrl+Cmd, 8=No-Cmd modifier
+   - **Resource bundle path bug**: Swift Package Manager builds produce `MDPreview_MDPreviewCore.bundle/Resources/` but manual build scripts were copying `Sources/MDPreviewCore/Resources` to `MDPreviewCore/` — wrong name, wrong path
+   - **Makefile bundle target vs universal target**: The `bundle` target correctly copies `$(BUILD_DIR)/*.bundle`; the `universal` target was missing this step
+   - **osascript Accessibility API**: Can enumerate menu items, keyboard shortcuts, enabled states, window titles for debugging/LLM control
+
+3. Files and Code Sections:
+
+   - **`Sources/MDPreviewCore/MDPreviewApp.swift`**
+     - Added `FocusedValues` extension and `WorkspaceFocusKey` for scene-level workspace focus
+     - Changed `.focusedSceneObject(workspace)` → `.focusedSceneValue(\.workspace, workspace)` in WindowRoot
+     - Changed `@FocusedObject` → `@FocusedValue(\.workspace)` in AppCommands
+     - Added `.onReceive` for `closeCurrentTab` and `closeAllTabs` notifications with key window guard
+     - Added `closeAllTabs` handler: closes window if no tabs
+     - Added `.disabled()` conditions to Next Tab, Previous Tab, Tab 1-9, Close All Tabs
+     ```swift
+     // MARK: - Focused Values
+     private struct WorkspaceFocusKey: FocusedValueKey {
+         typealias Value = Workspace
+     }
+     extension FocusedValues {
+         var workspace: Workspace? {
+             get { self[WorkspaceFocusKey.self] }
+             set { self[WorkspaceFocusKey.self] = newValue }
+         }
+     }
+     
+     // In WindowRoot.body:
+     .focusedSceneValue(\.workspace, workspace)
+     .onReceive(NotificationCenter.default.publisher(for: .closeCurrentTab)) { _ in
+         guard hostWindow?.isKeyWindow == true else { return }
+         if workspace.tabs.isEmpty { hostWindow?.close() } else { workspace.closeCurrentTab() }
+     }
+     .onReceive(NotificationCenter.default.publisher(for: .closeAllTabs)) { _ in
+         guard hostWindow?.isKeyWindow == true else { return }
+         if workspace.tabs.isEmpty { hostWindow?.close() } else { workspace.closeAllTabs() }
+     }
+     
+     // In AppCommands Window menu:
+     Button("Close All Tabs") { workspace?.closeAllTabs() }
+         .disabled(workspace?.tabs.isEmpty ?? true)
+     Button("Next Tab") { workspace?.selectNextTab() }
+         .keyboardShortcut("]", modifiers: [.command, .shift])
+         .disabled((workspace?.tabs.count ?? 0) <= 1)
+     Button("Previous Tab") { workspace?.selectPreviousTab() }
+         .keyboardShortcut("[", modifiers: [.command, .shift])
+         .disabled((workspace?.tabs.count ?? 0) <= 1)
+     ForEach(1...9, id: \.self) { index in
+         Button("Tab \(index)") { workspace?.selectTab(at: index - 1) }
+             .keyboardShortcut(KeyEquivalent(Character("\(index)")), modifiers: .command)
+             .disabled((workspace?.tabs.count ?? 0) < index)
+     }
+     ```
+
+   - **`Sources/MDPreviewCore/AppDelegate.swift`**
+     - Added `closeCurrentTab` and `closeAllTabs` notification names
+     - Added `installCloseTabKeyHandler()`: NSEvent local monitor for Cmd+W and Cmd+Opt+W
+     - Added `installMenuShortcutFixer()` + `applyCloseTabShortcutHints()`: patches NSMenu items to show ⌘W shortcut, re-applies on `NSMenu.didChangeItemNotification`
+     ```swift
+     public extension Notification.Name {
+         static let didRequestOpenFile = Notification.Name("didRequestOpenFile")
+         static let closeCurrentTab = Notification.Name("closeCurrentTab")
+         static let closeAllTabs = Notification.Name("closeAllTabs")
+     }
+     
+     private func installCloseTabKeyHandler() {
+         NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+             let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+             guard event.charactersIgnoringModifiers == "w" else { return event }
+             if flags == [.command, .option] {
+                 NotificationCenter.default.post(name: .closeAllTabs, object: nil)
+                 return nil
+             }
+             if flags == .command {
+                 NotificationCenter.default.post(name: .closeCurrentTab, object: nil)
+                 return nil
+             }
+             return event
+         }
+     }
+     
+     private func applyCloseTabShortcutHints() {
+         guard let windowMenu = NSApp.mainMenu?.item(withTitle: "Window")?.submenu else { return }
+         for item in windowMenu.items {
+             switch item.title {
+             case "Close Tab":
+                 if item.keyEquivalent != "w" {
+                     item.keyEquivalent = "w"
+                     item.keyEquivalentModifierMask = .command
+                 }
+             case "Close All Tabs":
+                 if item.keyEquivalent != "w" {
+                     item.keyEquivalent = "w"
+                     item.keyEquivalentModifierMask = [.command, .option]
+                 }
+             default: break
+             }
+         }
+     }
+     ```
+
+   - **`Makefile`**
+     - Fixed `universal` target to copy resource bundles from arm64 build output:
+     ```makefile
+     @for bundle in .build/arm64-apple-macosx/release/*.bundle; do \
+         [ -d "$bundle" ] && cp -R "$bundle" $(APP_BUNDLE)/Contents/Resources/; \
+     done
+     ```
+
+   - **`Supporting/Info.plist`**: Version bumped 1.4.0 → 1.4.1 → 1.4.2
+   - **`Supporting/mdpreview`**: VERSION bumped 1.4.0 → 1.4.1 → 1.4.2
+   - **`~/homebrew-tap/Casks/mdpreview.rb`**: Updated to version 1.4.2, sha256 `91c02844f6e906efcf2926476aca99eb387ce9931f1675deaf6c349e0fa2e972`
+
+4. Errors and Fixes:
+
+   - **`@FocusedSceneObject` unknown attribute**: The SDK doesn't expose this as a property wrapper. Fixed by switching to `@FocusedValue(\.workspace)` with custom `FocusedValueKey` + `focusedSceneValue` modifier.
+   
+   - **Cmd+W does nothing**: SwiftUI drops Close Tab shortcut registration due to conflict with system Close. `CmdChar: missing value` in accessibility tree. Fixed via NSEvent local monitor in AppDelegate that intercepts before menu system.
+   
+   - **Cmd+Opt+W triggers system Close All (closes all windows)**: Same conflict. Fixed by same NSEvent monitor.
+   
+   - **Close Tab / Close All Tabs don't show ⌘W in menu**: NSMenu patching approach: directly set `keyEquivalent` on NSMenuItems after SwiftUI builds menu, reapply on `NSMenu.didChangeItemNotification`.
+   
+   - **Tab 1-9 / Next/Prev Tab always enabled**: Missing `.disabled()` conditions in Commands. Fixed by adding dynamic disabled conditions based on `workspace?.tabs.count`.
+   
+   - **`ERROR: No template.html found!`** (critical - blank markdown): Root cause: manual build script used `cp -r Sources/MDPreviewCore/Resources build/MDPreview.app/Contents/Resources/MDPreviewCore` creating wrong path. Code expects `Contents/Resources/MDPreview_MDPreviewCore.bundle/Resources/`. Fix: use `cp -R .build/arm64-apple-macosx/release/MDPreview_MDPreviewCore.bundle build/MDPreview.app/Contents/Resources/`. Also Makefile `universal` target was missing bundle copy step (fixed).
+   
+   - **`cp` "Operation not permitted"**: Signed app bundle has `com.apple.provenance` extended attribute making it immutable. Fix: deleted the old app bundle and rebuilt from scratch with correct structure.
+   
+   - **git add path error**: Running git from wrong directory. Fixed by using absolute path `cd /Users/kazu42/dev/mdpreview`.
+
+5. Problem Solving:
+
+   - **Identified the blank markdown root cause from logs**: The log file showed `ERROR: No template.html found!` repeatedly starting at 09:06:52 (Homebrew-installed v1.4.0). This appeared every single time a file was opened. The template.html was being looked for at `MDPreview_MDPreviewCore.bundle/Resources/template.html` but the bundle was placed at `MDPreviewCore/` in the app bundle.
+   
+   - **Shortcut system debugging**: Used osascript Accessibility API to decode all menu item keyboard shortcuts with modifier bitmask decoding. Discovered the system-provided shortcuts and which of our shortcuts were actually registered vs silently dropped by SwiftUI.
+   
+   - **NSEvent monitor design**: Since we can't remove the system's Close (⌘W) item from the File menu, intercepting the key event before the menu processes it is the cleanest solution. The NSMenu patching for display-only purposes works alongside it.
+
+6. All User Messages:
+   - (Session resumed automatically from previous context - no explicit first message)
+   - "macアプリってterminalから操作できない？"
+   - "結構ショートカットがバグったり、挙動が怪しいところあるから、デバッグして欲しい。ブラウザmcpみたいな感じでlLMが操作できたらなと"
+   - "全部のショートカットを総点検してほしい"
+   - "markdownが表示されないことがあるの、原因調べられたりしない？"
+   - (While investigating) sent log file path: `/Users/kazu42/careshift/nursehappy/mdpreview-2026-02-27_184317.log`
+   - "一応ログ"
+
+7. Pending Tasks:
+   - Complete the Homebrew tap update for v1.4.2: `git push` in `~/homebrew-tap/` and verify `brew upgrade` works
+   - The `~/homebrew-tap/Casks/mdpreview.rb` was edited but not yet committed/pushed
+
+8. Current Work:
+   Working on releasing v1.4.2 which fixes the critical blank markdown display bug. The Homebrew tap cask file has been updated to version 1.4.2 with sha256 `91c02844f6e906efcf2926476aca99eb387ce9931f1675deaf6c349e0fa2e972`, but the git commit and push to the homebrew-tap repository have not yet been done.
+
+   The last edit was to `/Users/kazu42/homebrew-tap/Casks/mdpreview.rb`:
+   ```ruby
+   cask "mdpreview" do
+     version "1.4.2"
+     sha256 "91c02844f6e906efcf2926476aca99eb387ce9931f1675deaf6c349e0fa2e972"
+     url "https://github.com/kazu-42/mdpreview/releases/download/v#{version}/MDPreview.dmg"
+     ...
+   ```
+
+9. Optional Next Step:
+   Complete the Homebrew tap release by committing and pushing the cask update:
+   ```bash
+   cd ~/homebrew-tap && git add Casks/mdpreview.rb && git commit -m "mdpreview 1.4.2" && git push
+   ```
+   Then verify with `brew upgrade --cask kazu-42/tap/mdpreview` to confirm the fix works end-to-end.
+
+If you need specific details from before compaction (like exact code snippets, error messages, or content you generated), read the full transcript at: /Users/kazu42/.claude/projects/-Users-kazu42-dev-mdpreview/d169b4f4-088f-453c-a45f-6bcdadd0a97d.jsonl
+Please continue the conversation from where we left off without asking the user any further questions. Continue with the last task that you were asked to work on.
+
+---
+
+- [クイックスタート](#-クイックスタート)
+- [ログイン情報](#-ログイン情報)
+- [開発環境](#-開発環境)
+- [アーキテクチャ](#-アーキテクチャ)
+- [プロジェクト構造](#-プロジェクト構造)
+- [よく使うコマンド](#-よく使うコマンド)
+- [主な機能](#-主な機能)
+- [技術スタック](#-技術スタック)
+- [API エンドポイント](#-api-エンドポイント)
+- [テスト](#-テスト)
+- [データベース構成](#-データベース構成)
+- [インフラ管理（Terraform）](#-インフラ管理terraform)
+- [ドキュメント](#-ドキュメント)
+- [トラブルシューティング](#-トラブルシューティング)
+このタイプのTOCってgithubだと対応されてるんだけど、対応むずい？
+
+---
+
+ビルドして
+
+---
+
+それ以外にgithubのmarkdownレンダラーが対応してることってありますか？
+
+---
+
+全部対応して欲しい
+
+---
+
+[Request interrupted by user]
+
+---
+
+- カラーチップ (`#ff0000` の横に色スウォッチ表示) — かなり細かい
+  - 動画ファイル埋め込み — ローカル限定の用途
+  - ファイルツリー (```bash でのディレクトリ図) — ただのコードブロック扱いで十分
+こいつらはいらないや
+markdown以外にもテキストファイルに対応するって結構重くなりますか？syntacs highlightするなら、lspとか入れておいていい感じにするとかだと重い？
+
+---
+
+やって
+
+---
+
+buildita?
+
+---
+
+[Request interrupted by user]
+
+---
+
+buildした？
+
+---
+
+markdown以外、サイドバーで選択できないかも？
+
+---
+
+<task-notification>
+<task-id>bnicf3f8q</task-id>
+<tool-use-id>toolu_01KbQdWuuQ7XqiMeXek7Bqb9</tool-use-id>
+<output-file>/private/tmp/claude-502/-Users-kazu42-dev-mdpreview/tasks/bnicf3f8q.output</output-file>
+<status>failed</status>
+<summary>Background command "Find MDPreview log files" failed with exit code 1</summary>
+</task-notification>
+Read the output file to retrieve the result: /private/tmp/claude-502/-Users-kazu42-dev-mdpreview/tasks/bnicf3f8q.output
+
+---
+
+サイドバーで.md以外のファイルの選択ができないかも
+
+---
+
+This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation.
+
+Analysis:
+Let me chronologically analyze this conversation:
+
+1. **Session start**: Resumed from previous context. The Homebrew tap cask file for v1.4.2 had been edited but not yet committed/pushed. The last task was completing the release.
+
+2. **Homebrew tap push**: Committed and pushed `~/homebrew-tap/Casks/mdpreview.rb` updating version to 1.4.2 with the correct SHA256.
+
+3. **TOC anchor links**: User showed a TOC with `#-クイックスタート` style anchors (GitHub compatible with emoji→hyphen conversion). Asked if it's hard to support. Fixed the heading slug generation in `template.html` from `[^a-z0-9\s-]` to `[^\p{L}\p{N}\s-]` with `u` flag (Unicode property escapes), also added duplicate heading counter.
+
+4. **Build**: User asked to build → `swift build` → success.
+
+5. **GitHub Markdown features**: User asked what other GitHub markdown features MDPreview is missing. Identified: Alerts/Callouts (`> [!NOTE]`), Footnotes, Heading hover links, Color chips, Video embed, File tree. User said skip color chips, video, file tree.
+
+6. **Implementing Alerts + Footnotes + Heading hover links**: Rewrote `template.html` to add:
+   - GitHub Alerts (5 types: NOTE, TIP, IMPORTANT, WARNING, CAUTION) with dark/light mode CSS
+   - Footnotes (preprocessFootnotes function, numbered in reference order)
+   - Heading anchor hover links (`.heading-anchor` CSS + JS appending `<a>` to headings)
+
+7. **Text file support question**: User asked if supporting non-markdown text files with syntax highlighting would be heavy. Answered: highlight.js is already bundled so essentially free. LSP would be overkill.
+
+8. **Text file support implementation**: User said "やって". Implemented across 6 files:
+   - `template.html`: Added `renderCode(content, language)` function
+   - `FileTree.swift`: Added 40+ extension→language map (`codeExtensionMap`), `isTextFile()`, `language(for:)` static methods; updated `onTapGesture` to allow non-markdown files; updated `FileTreeRow` visual states
+   - `Workspace.swift`: Added `fileLanguage` computed property; updated `showOpenPanel` to allow `.text`, `.sourceCode`, `.plainText`
+   - `MarkdownWebView.swift`: Added `fileLanguage` parameter; branched `evaluateRender` and `didFinish` to use `renderCode` for non-markdown; added `pendingLanguage` to Coordinator
+   - `MainView.swift`: Passed `fileLanguage: workspace.fileLanguage` to `MarkdownWebView`
+   - `Supporting/Info.plist`: Added 25+ source code extensions as Alternate document type
+
+9. **Build confirmation**: User asked "buildした？" - confirmed build was already successful.
+
+10. **Sidebar selection issue**: User said "markdown以外、サイドバーで選択できないかも？"
+
+11. **Attempted app testing**: Multiple attempts to launch MDPreview debug build and capture screenshots/accessibility. The installed `/Applications/MDPreview.app` conflicted (same bundle ID). Eventually found:
+    - `isSelected` was passed to `FileTreeRow` but NOT used visually → fixed with accent color highlight
+    - Moved installed app aside temporarily
+    - Ran screencapture attempts but osascript couldn't see windows
+
+12. **User confirmed the bug**: "サイドバーで.md以外のファイルの選択ができないかも" - confirmed non-markdown files can't be selected from sidebar.
+
+13. **Current fix in progress**: Identified two bugs:
+    1. `onTapGesture` in `List` + `OutlineGroup` is unreliable → changing to `Button` with `.buttonStyle(.plain)`
+    2. `pendingLanguage` not set in the baseURL change branch of `updateNSView` in `MarkdownWebView.swift`
+
+The edit to `FileTree.swift` (changing `onTapGesture` to `Button`) was started but the summary was triggered mid-fix - the `contextMenu` closing brace needs to be updated too.
+
+Summary:
+1. Primary Request and Intent:
+   - Complete the Homebrew tap release for v1.4.2 (carried over from previous session)
+   - Fix GitHub-compatible TOC anchor links (`#-クイックスタート` pattern with emoji→hyphen)
+   - Implement missing GitHub Markdown features: Alerts (`> [!NOTE]`), Footnotes, Heading hover links
+   - Add text file support with syntax highlighting (non-markdown files: .swift, .py, .js, etc.)
+   - Fix sidebar selection bug: non-markdown files couldn't be selected/opened from the file tree sidebar
+
+2. Key Technical Concepts:
+   - **Unicode property escapes** in JS regex: `[^\p{L}\p{N}\s-]` with `u` flag for GitHub-compatible heading slugs (supports Japanese, emoji handling)
+   - **GitHub Alerts** (`> [!NOTE]`, `> [!TIP]`, `> [!IMPORTANT]`, `> [!WARNING]`, `> [!CAUTION]`) - blockquote post-processing with CSS dark/light mode
+   - **Footnotes** preprocessing before `marked.parse()` - numbered in reference order, appended as `<section class="footnotes">` after render
+   - **Heading hover anchor links** - JS appends `<a class="heading-anchor">` to each heading, CSS shows on hover
+   - **highlight.js** already bundled → text file syntax highlighting is essentially free (no new dependencies)
+   - **SwiftUI `List` + `OutlineGroup` tap behavior**: `onTapGesture` is unreliable in this context; `Button` with `.buttonStyle(.plain)` is the correct approach
+   - **`pendingLanguage` bug**: In `MarkdownWebView.updateNSView`, the baseURL-change branch does not set `context.coordinator.pendingLanguage = fileLanguage`, causing non-markdown files to render as markdown when the file is in a different directory
+   - **Bundle ID conflict**: `/Applications/MDPreview.app` and debug build share the same bundle ID `dev.kazu42.mdpreview`, causing `open` commands to route to the installed version
+
+3. Files and Code Sections:
+
+   - **`~/homebrew-tap/Casks/mdpreview.rb`**
+     - Updated version to 1.4.2, sha256 to `91c02844f6e906efcf2926476aca99eb387ce9931f1675deaf6c349e0fa2e972`
+     - Committed and pushed to complete the v1.4.2 release
+
+   - **`Sources/MDPreviewCore/Resources/template.html`** (complete rewrite)
+     - Fixed heading slug: `[^a-z0-9\s-]` → `[^\p{L}\p{N}\s-]` with `u` flag + duplicate counter
+     - Added `preprocessFootnotes(markdown)` function (extracts `[^id]: text`, replaces `[^id]` with numbered `<sup>` links, numbered in reference order)
+     - Added `processAlerts(container)` function (converts `> [!NOTE]` etc. blockquotes to `.gh-alert` divs)
+     - Added heading anchor `<a class="heading-anchor">` appended to each heading in slug loop
+     - Added `renderCode(content, language)` function for non-markdown files
+     - CSS for: `.gh-alert` (5 types, dark/light mode), `.footnotes`, `.heading-anchor`, `sup.footnote-ref`
+     ```js
+     function renderCode(content, language) {
+         var container = document.getElementById('content');
+         var pre = document.createElement('pre');
+         var code = document.createElement('code');
+         if (language && language !== 'plaintext') {
+             code.className = 'language-' + language;
+         }
+         code.textContent = content;
+         pre.appendChild(code);
+         container.innerHTML = '';
+         container.appendChild(pre);
+         if (language && language !== 'plaintext') {
+             hljs.highlightElement(code);
+         }
+         window.scrollTo(0, 0);
+     }
+     ```
+
+   - **`Sources/MDPreviewCore/FileTree.swift`**
+     - Added `codeExtensionMap: [String: String]` static dict (40+ extensions)
+     - Added `language(for url: URL) -> String` static method
+     - Added `isTextFile(_ url: URL) -> Bool` static method
+     - Changed `onTapGesture` → `Button` with `.buttonStyle(.plain)` for reliable List interaction (in progress at summary time)
+     - Updated `FileTreeRow` to use `isText` instead of `isMarkdown`
+     - Added `isSelected` visual highlighting (accent color background, bold, accent foreground)
+     ```swift
+     public static func isTextFile(_ url: URL) -> Bool {
+         let ext = url.pathExtension.lowercased()
+         let name = url.lastPathComponent.lowercased()
+         if markdownExtensions.contains(ext) { return true }
+         if name == "makefile" || name == "dockerfile" { return true }
+         return codeExtensionMap[ext] != nil
+     }
+     ```
+     Current fix in progress (changing onTapGesture to Button):
+     ```swift
+     Button {
+         guard !node.isDirectory else { return }
+         guard FileTreeNode.isTextFile(node.url) else { return }
+         workspace.openFile(node.url)
+     } label: {
+         FileTreeRow(node: node, isSelected: isSelected(node))
+             .frame(maxWidth: .infinity, alignment: .leading)
+             .contentShape(Rectangle())
+     }
+     .buttonStyle(.plain)
+     .contextMenu { ... }
+     ```
+
+   - **`Sources/MDPreviewCore/Workspace.swift`**
+     - Added `fileLanguage` computed property using `FileTreeNode.language(for:)`
+     - Updated `showOpenPanel` to use `[.text, .sourceCode, .plainText]` instead of only markdown types
+     ```swift
+     public var fileLanguage: String {
+         guard let tab = selectedTab else { return "markdown" }
+         return FileTreeNode.language(for: tab.url)
+     }
+     ```
+
+   - **`Sources/MDPreviewCore/MarkdownWebView.swift`**
+     - Added `fileLanguage: String` parameter (default `"markdown"`)
+     - Added `pendingLanguage: String = "markdown"` to `Coordinator`
+     - Updated `evaluateRender` to branch on `fileLanguage`: markdown → `render()`, else → `renderCode()`
+     - Updated `didFinish` similarly to branch on `pendingLanguage`
+     - **Bug identified but NOT yet fixed**: in the `baseURL changed` branch of `updateNSView`, `context.coordinator.pendingLanguage = fileLanguage` is missing
+
+   - **`Sources/MDPreviewCore/MainView.swift`**
+     - Added `fileLanguage: workspace.fileLanguage` to `MarkdownWebView(...)` call
+
+   - **`Supporting/Info.plist`**
+     - Added second `CFBundleDocumentTypes` entry with 25+ source code extensions (swift, py, js, ts, go, rs, java, kt, rb, php, cs, cpp, c, h, sh, json, yaml, yml, toml, xml, html, css, scss, sql, txt) with `LSHandlerRank: Alternate`
+
+4. Errors and Fixes:
+   - **Heading slugs broken for Japanese/emoji**: Original regex `[^a-z0-9\s-]` stripped all non-ASCII characters including Japanese. Fixed with `[^\p{L}\p{N}\s-]` + `u` flag.
+   - **`isSelected` not visually applied in `FileTreeRow`**: `isSelected` was passed to the view but never used in the body. Fixed by adding accent color background, bold text, and accent color icon/text when selected.
+   - **`onTapGesture` unreliable in `List` + `OutlineGroup`**: macOS SwiftUI `List` with `.sidebar` style intercepts taps. Non-markdown files couldn't be opened. Fix: change to `Button` with `.buttonStyle(.plain)`.
+   - **`pendingLanguage` missing in baseURL change path**: When switching to a file in a different directory, `pendingLanguage` stays as "markdown", causing Swift/etc. files to render incorrectly. Fix pending (add `context.coordinator.pendingLanguage = fileLanguage` in the baseURL branch).
+   - **Bundle ID conflict during testing**: Debug build and `/Applications/MDPreview.app` share bundle ID `dev.kazu42.mdpreview`. `open` commands route to the running instance. Temporarily moved `/Applications/MDPreview.app` to `.bak` for testing (now restored).
+
+5. Problem Solving:
+   - **GitHub-compatible TOC anchors**: Solved by switching to Unicode-aware JS regex with `u` flag, handling emoji→space→hyphen conversion correctly
+   - **Text file support**: Implemented via `renderCode()` JS function using already-bundled highlight.js, with zero additional library weight
+   - **Sidebar non-markdown selection**: Identified two root causes: (1) unreliable `onTapGesture` in List, (2) missing `pendingLanguage` update; fix in progress
+
+6. All user messages:
+   - (Session resumed automatically)
+   - `- [クイックスタート](#-クイックスタート)` ... `このタイプのTOCってgithubだと対応されてるんだけど、対応むずい？`
+   - `ビルドして`
+   - `それ以外にgithubのmarkdownレンダラーが対応してることってありますか？`
+   - `全部対応して欲しい`
+   - `[Request interrupted by user]` + カラーチップ/動画/ファイルツリーはいらない + `markdown以外にもテキストファイルに対応するって結構重くなりますか？syntacs highlightするなら、lspとか入れておいていい感じにするとかだと重い？`
+   - `やって`
+   - `buildした？`
+   - `markdown以外、サイドバーで選択できないかも？`
+   - `実際に操作して確認までやってほしい`
+   - `サイドバーで.md以外のファイルの選択ができないかも`
+
+7. Pending Tasks:
+   - Fix `onTapGesture` → `Button` in `FileTree.swift` (started, `contextMenu` closing brace adjustment needed)
+   - Fix `pendingLanguage` missing in `MarkdownWebView.updateNSView` baseURL change branch
+   - Build and verify the sidebar selection works for non-markdown files
+
+8. Current Work:
+   User confirmed: "サイドバーで.md以外のファイルの選択ができないかも" (non-markdown files can't be selected from sidebar).
+
+   Two bugs identified:
+   1. `onTapGesture` unreliable in `List` + `OutlineGroup` on macOS
+   2. `pendingLanguage` not set in baseURL-change branch
+
+   Fix #1 started in `FileTree.swift` - changed `onTapGesture` to `Button`:
+   ```swift
+   Button {
+       guard !node.isDirectory else { return }
+       guard FileTreeNode.isTextFile(node.url) else { return }
+       workspace.openFile(node.url)
+   } label: {
+       FileTreeRow(node: node, isSelected: isSelected(node))
+           .frame(maxWidth: .infinity, alignment: .leading)
+           .contentShape(Rectangle())
+   }
+   .buttonStyle(.plain)
+   .contextMenu {  // ← summary triggered here, contextMenu contents not yet updated
+   ```
+
+   The edit was applied to `FileTree.swift` via `Edit` tool just before the summary was requested.
+
+9. Optional Next Step:
+   Complete the two-part fix for sidebar non-markdown selection:
+
+   1. Verify the `FileTree.swift` `Button` change is complete (check that `.contextMenu` closing structure is correct after the edit)
+
+   2. Add the missing `pendingLanguage` fix in `MarkdownWebView.swift`:
+   ```swift
+   if context.coordinator.baseURL != baseURL {
+       context.coordinator.baseURL = baseURL
+       context.coordinator.isLoaded = false
+       context.coordinator.pendingContent = markdownContent
+       context.coordinator.pendingPreserveScroll = false
+       context.coordinator.pendingCSS = customCSS
+       context.coordinator.pendingLanguage = fileLanguage  // ← ADD THIS
+       loadTemplate(into: webView, baseURL: baseURL)
+       return
+   }
+   ```
+
+   3. Build and have user test the sidebar file selection.
+
+If you need specific details from before compaction (like exact code snippets, error messages, or content you generated), read the full transcript at: /Users/kazu42/.claude/projects/-Users-kazu42-dev-mdpreview/d169b4f4-088f-453c-a45f-6bcdadd0a97d.jsonl
+Please continue the conversation from where we left off without asking the user any further questions. Continue with the last task that you were asked to work on.
+
+---
+
+サイドバーでmarkdown以外のファイルが選択できないようにブロックされちゃってる
+
+---
+
+アプリがクラッシュする
+
+---
+
+まだ、buildしたやつだよね？/Users/kazu42/dev/mdpreview/build/MDPreview.app/Contents/MacOS/MDPreview これ起動すると、強制終了とappleへのレポート見たいなやつ出てきて動作確認できない
+
+---
+
+textファイル（例えば、licenceとか.env）を扱えるようにして欲しい。どうするのがいいかな？fileコマンドとかやるのは重すぎる気がする。fileタイプを即座に並列で判断する方法とかってある？
+
+---
+
+左のサイドバーなんだけど、開いてるファイルの表示が拗すぎる。ファインダーのサイドバーの画像渡したからそんな感じにしてほしい
+
+---
+
+.env.keysとかもテキストファイルな気がするんだけど、これは、システムコール側の判断の問題かな？
+
+---
+
+.envrcも？
+
+---
+
+ありがとう！リリースして。skills確認して
+
+---
+
+## Agent Team 起動コマンド
+
+このコマンドはClaude Code Agent Teams（Research Preview）を使って、複数のエージェントをチームとして協調動作させます。
+
+## 利用可能なロール一覧
+
+各ロールは個別のスラッシュコマンドとして起動できます。Agent Team ではこれらを組み合わせて並列に実行します。
+
+### Product & Strategy
+| コマンド | 役割 | いつ使うか |
+|---------|------|----------|
+| `/po` | プロダクトオーナー | プロジェクト開始時、要件定義時 |
+| `/policy` | 技術方針 | 技術選定、方針転換時 |
+
+### Architecture & Design
+| コマンド | 役割 | いつ使うか |
+|---------|------|----------|
+| `/architect` | システムアーキテクト | 新機能設計、アーキテクチャ変更時 |
+| `/api-designer` | API設計 | API新規作成、API仕様変更時 |
+| `/db-designer` | DB設計 | データモデル変更、マイグレーション時 |
+
+### Planning
+| コマンド | 役割 | いつ使うか |
+|---------|------|----------|
+| `/task-planner` | タスク分解・計画 | 設計完了後、スプリント計画時 |
+
+### Implementation
+| コマンド | 役割 | いつ使うか |
+|---------|------|----------|
+| `/frontend` | フロントエンド開発 | UI実装時（TDD） |
+| `/backend` | バックエンド開発 | ドメインロジック実装時（TDD） |
+| `/infra` | インフラ整備 | CI/CD構築、デプロイ設定時 |
+
+### Quality & Review
+| コマンド | 役割 | いつ使うか |
+|---------|------|----------|
+| `/design-reviewer` | 設計レビュー | 設計書完成後 |
+| `/reviewer` | コードレビュー | PR作成後、実装完了後 |
+| `/qa` | QA | テスト戦略策定、バグ確認時 |
+| `/red-team` | セキュリティ・批判的レビュー | リリース前、重要な設計判断時 |
+
+### Maintenance
+| コマンド | 役割 | いつ使うか |
+|---------|------|----------|
+| `/refactoring` | リファクタリング | 技術的負債解消、コード品質改善時 |
+
+### Problem Solving
+| コマンド | 役割 | いつ使うか |
+|---------|------|----------|
+| `/deliberate` | 難問解決（多角的議論・Web調査・構造化推論） | 通常手法で解決不能な問題、重要な技術判断時 |
+
+### External Tools
+| コマンド | 役割 | いつ使うか |
+|---------|------|----------|
+| `/codex` | OpenAI Codex CLI連携 | Codexエージェントで並列タスク実行時 |
+| `/cursor-cli` | Cursor CLI連携 | Cursorエージェントで並列タスク実行時 |
+| `/agent-browser` | ブラウザ自動操作 | Web操作自動化、スクレイピング、E2E時 |
+
+## memory.md 共有メモリ（全ロール共通）
+
+Agent Team では全メンバーが `memory.md` を共有し、気づき・決定・警告を記録・参照する。
+
+### 基本ルール
+- **作業開始時**: `memory.md` を読み、他メンバーの記録を確認する
+- **作業中**: 重要な気づき・判断・警告をリアルタイムで記録する
+- **作業完了時**: 成果サマリーを記録し、後続メンバーへの引き継ぎとする
+
+### 記録フォーマット
+```markdown
+## [YYYY-MM-DD HH:MM] [ロール名] - [カテゴリ]
+**コンテキスト**: [何について]
+**内容**: [気づき・発見・判断の詳細]
+**影響**: [誰が知るべきか / 次のアクション]
+```
+
+### カテゴリ一覧
+| カテゴリ | 用途 |
+|---------|------|
+| `discovery` | 新しい発見・気づき |
+| `decision` | 判断・決定とその根拠 |
+| `warning` | 注意事項・リスク |
+| `failed-approach` | 失敗したアプローチ（再発防止） |
+| `blocker` | ブロッカー（即座に対応必要） |
+| `insight` | 他ロールに有益なインサイト |
+
+### Team Lead の責務
+- チーム起動時に `memory.md` の初期化（プロジェクトコンテキスト記録）
+- 定期的に `memory.md` を確認し、ブロッカーや矛盾を検出
+- チーム完了時にサマリーを `memory.md` に記録
+
+## ロール連携図
+
+```mermaid
+graph TD
+    PO["/po<br>Product Owner"] --> Policy["/policy<br>Technical Policy"]
+    Policy --> Architect["/architect<br>System Architect"]
+    Architect --> APIDesigner["/api-designer<br>API Designer"]
+    Architect --> DBDesigner["/db-designer<br>DB Designer"]
+    Architect --> TaskPlanner["/task-planner<br>Task Planner"]
+    TaskPlanner --> Frontend["/frontend<br>Frontend Dev"]
+    TaskPlanner --> Backend["/backend<br>Backend Dev"]
+    TaskPlanner --> Infra["/infra<br>Infra Engineer"]
+    Frontend --> Reviewer["/reviewer<br>Code Reviewer"]
+    Backend --> Reviewer
+    Reviewer --> QA["/qa<br>QA Engineer"]
+    DesignReviewer["/design-reviewer<br>Design Reviewer"] -.-> Architect
+    DesignReviewer -.-> APIDesigner
+    DesignReviewer -.-> DBDesigner
+    QA --> RedTeam["/red-team<br>Red Team"]
+    RedTeam --> Refactoring["/refactoring<br>Refactoring Lead"]
+    Refactoring -.-> Architect
+    Deliberate["/deliberate<br>Deliberate"] -.->|難問発生時| Architect
+    Deliberate -.->|難問発生時| Backend
+    Deliberate -.->|難問発生時| Frontend
+```
+
+## チーム構成パターン
+
+### パターンA: フルスタック開発（フロントエンド + バックエンド）
+- **frontend**: UI実装担当（`/frontend` skill使用）
+- **backend**: API・ドメイン実装担当（`/backend` skill使用）
+- **tester**: テスト実装・品質チェック担当（`/qa` skill使用）
+
+### パターンB: 調査・リファクタリング
+- **researcher**: コードベース調査・影響範囲分析担当
+- **implementer**: 実装・修正担当（`/refactoring` skill使用）
+- **reviewer**: コードレビュー・品質確認担当（`/reviewer` skill使用）
+
+### パターンC: バグ修正
+- **investigator**: 原因調査・仮説検証担当
+- **fixer**: 修正実装担当（`/backend` or `/frontend` skill使用）
+
+### パターンD: カスタム
+- ユーザーの要望に応じて自由に構成
+
+### パターンE: 新機能開発（フルプロセス）
+- **po**: 要件定義（`/po` skill使用）
+- **architect**: 設計（`/architect` + `/api-designer` + `/db-designer` skill使用）
+- **planner**: タスク分解（`/task-planner` skill使用）
+- **frontend + backend**: 並列実装
+- **reviewer + qa**: 品質確認
+
+### パターンF: セキュリティ監査
+- **red-team**: セキュリティ・批判的レビュー（`/red-team` skill使用）
+- **reviewer**: コードレビュー（`/reviewer` skill使用）
+- **infra**: インフラセキュリティ（`/infra` skill使用）
+
+### パターンG: 品質改善スプリント
+- **qa**: テスト戦略・テスト改善（`/qa` skill使用）
+- **refactoring**: コード品質改善（`/refactoring` skill使用）
+- **reviewer**: レビュー（`/reviewer` skill使用）
+
+### パターンH: DB移行
+- **db-designer**: スキーマ設計（`/db-designer` skill使用）
+- **backend**: マイグレーション実装（`/backend` skill使用）
+- **infra**: デプロイ・ロールバック準備（`/infra` skill使用）
+
+### パターンI: API刷新
+- **api-designer**: API設計（`/api-designer` skill使用）
+- **backend**: API実装（`/backend` skill使用）
+- **frontend**: フロント側対応（`/frontend` skill使用）
+- **reviewer**: レビュー（`/reviewer` skill使用）
+
+### パターンJ: マルチエージェント並列（外部ツール活用）
+- **claude-code**: メインの実装担当
+- **codex**: 並列タスク実行（`/codex` skill使用）
+- **cursor**: 追加の並列タスク（`/cursor-cli` skill使用）
+- **browser**: E2Eテスト・Web確認（`/agent-browser` skill使用）
+
+### パターンK: 難問解決（マルチエージェント議論）
+
+`/deliberate` skill が2つのサブチーム構成を提供する。問題の性質に応じて選択する。
+
+#### K-1: ビジネス戦略チーム（プロダクト・市場・事業判断）
+| サブエージェント | 役割 | 担当 |
+|----------------|------|------|
+| `inquiry-lead` | 問いの設計者 | 「何を分析すべきか」を構造化 |
+| `market-scout` | 市場調査担当 | WebSearch/Exa で市場データ・ベンチマーク収集 |
+| `data-analyst` | 定量分析担当 | RICE, ROI, TAM等の数値分析 |
+| `strategist` | 戦略立案者 | 分析結果を統合し戦略オプションを設計 |
+| `challenger` | 批判的レビュー担当 | Pre-mortem/Devil's Advocate で全体をレビュー |
+
+#### K-2: エンジニアリングチーム（技術課題・アーキテクチャ・デバッグ）
+| サブエージェント | 役割 | 担当 |
+|----------------|------|------|
+| `scoper` | 問題構造化担当 | 技術問題を分析可能な形に構造化 |
+| `tech-scout` | 技術調査担当 | ドキュメント・ベンチマーク・先行事例を収集 |
+| `investigator` | コード分析担当 | プロファイリング、根本原因調査、Task(Explore) |
+| `solution-designer` | 解決策設計担当 | 解決オプションの設計、トレードオフ評価 |
+| `challenger` | 批判的レビュー担当 | 技術的Pre-mortem、リスク評価 |
+
+#### K-3: 外部エージェント議論（Codex/Cursor活用）
+- **deliberator**: ファシリテーション・統合（`/deliberate` skill使用）
+- **codex**: 独立した分析・Devil's Advocate（`/codex` skill使用）
+- **cursor**: 別角度からの設計レビュー（`/cursor-cli` skill使用）
+- **researcher**: Web調査・先例収集（Task(Explore) + WebSearch）
+
+## 実行手順
+
+### 1. タスクの確認
+
+ユーザーに以下を確認する:
+
+- **何をしたいか**: 実装タスクの内容
+- **チーム構成の希望**: 特に指定がなければ、タスクに応じてパターンA〜Kから最適な構成を提案
+
+### 2. チーム構成の決定
+
+タスクの内容に応じて最適なパターンを選択・提案する。
+
+### 3. チームの起動
+
+1. `Teammate` ツールの `spawnTeam` でチームを作成
+2. `TaskCreate` でタスクリストを作成（依存関係も設定）
+3. `Task` ツールで各テームメートを `team_name` と `name` パラメータ付きで起動
+4. 各テームメートにタスクを割り当て
+
+### 4. チームへの指示内容
+
+各テームメートの起動プロンプトには以下を含める:
+
+- **使用するskill**: どのスラッシュコマンドの役割で動くか
+- **作業ディレクトリ**: worktree を使う場合はそのパスを指定
+- **担当範囲**: どのディレクトリ・ファイルを担当するか
+- **タスク詳細**: 具体的に何を実装・修正するか
+- **制約事項**: CLAUDE.mdの規約に従うこと、他のメンバーの担当ファイルは編集しないこと
+- **完了条件**: 何をもってタスク完了とするか
+
+### 5. ファイル競合の回避戦略
+
+Agent Teams で最も重要な課題はファイル競合の回避。以下の戦略を優先度順に適用する。
+
+#### 戦略1: Git Worktree（推奨）
+
+各チームメイトに別々の worktree を割り当てることで、ファイル競合を**完全に回避**できる。
+
+```bash
+# メインブランチから各チームメイト用の worktree を作成
+git worktree add ../project-frontend feature/frontend
+git worktree add ../project-backend feature/backend
+git worktree add ../project-infra feature/infra
+```
+
+- 各チームメイトは独立したディレクトリで作業するため、同じファイルを同時に編集しても競合しない
+- 作業完了後に `git merge` で統合
+- **起動時の指示例**: 「作業ディレクトリは `../project-frontend` です。このworktree内で作業してください」
+
+#### 戦略2: ファイル所有権の明示的分割
+
+worktree が使えない場合、各チームメイトの担当ファイルを重複しないよう明示的に割り当てる。
+
+- **起動時の指示例**: 「担当ファイル: `src/components/`, `src/hooks/`。他のディレクトリは編集禁止」
+- 共有ファイル（`package.json`, 設定ファイル等）の編集権限は1人に限定する
+
+#### 戦略3: フェーズ分割（逐次実行）
+
+競合が避けられないタスクは並列ではなくフェーズを分けて逐次実行する。
+
+### 6. その他の注意事項
+
+- **コスト意識**: Agent Teamsはトークン消費が大幅に増加するため、並列化のメリットが明確なタスクに使用する
+- **表示モード**: tmuxが利用可能な場合は `tmux` モード、そうでなければ `in-process` モードで起動
+- **CLAUDE.md遵守**: 全テームメートがプロジェクトのコーディング規約に従うよう、プロンプトに明記する
+- **テームメートの監視**: 定期的にタスクの進捗を確認し、ブロックされているタスクがあれば対処する
+
+## 実行例
+
+### 例1: フルスタック機能開発
+```
+ユーザー: 「/agent-team」
+→ タスク確認: 「Webhook管理機能のフロントエンドとバックエンドを並列で実装したい」
+→ チーム構成: パターンA (frontend + backend + tester)
+→ 各メンバーに /frontend, /backend, /qa skill を指定
+→ チーム起動 & タスク割り当て
+```
+
+### 例2: 大規模リファクタリング
+```
+ユーザー: 「/agent-team」
+→ タスク確認: 「認証周りのリファクタリング」
+→ チーム構成: パターンB (researcher + implementer + reviewer)
+→ implementer に /refactoring skill、reviewer に /reviewer skill を指定
+→ チーム起動 & タスク割り当て
+```
+
+### 例3: 新機能フルプロセス
+```
+ユーザー: 「/agent-team」
+→ タスク確認: 「ユーザー管理機能を新規追加」
+→ チーム構成: パターンE (po → architect → planner → frontend + backend → reviewer + qa)
+→ 各フェーズのメンバーに対応するskillを指定
+→ フェーズごとに順次起動
+```
+
+### 例4: マルチエージェント並列開発
+```
+ユーザー: 「/agent-team」
+→ タスク確認: 「3つの独立した機能を同時に実装したい」
+→ チーム構成: パターンJ (claude-code + codex + cursor)
+→ 各エージェントに独立した機能を割り当て
+→ agent-browser で最終的なE2E確認
+```
+
+### 例5: 難問解決（エンジニアリング）
+```
+ユーザー: 「/agent-team」
+→ タスク確認: 「本番でのみ発生するパフォーマンス劣化の原因が分からない」
+→ チーム構成: パターンK-2 (scoper → tech-scout + investigator → solution-designer → challenger)
+→ memory.md で各サブエージェントの発見を共有
+→ challenger が全仮説をレビューし、最終的な解決策を決定
+```
+
+### 例6: 難問解決（ビジネス戦略）
+```
+ユーザー: 「/agent-team」
+→ タスク確認: 「新しいプライシングモデルの導入判断」
+→ チーム構成: パターンK-1 (inquiry-lead → market-scout + data-analyst → strategist → challenger)
+→ memory.md で市場データ・分析結果を共有
+→ challenger がPre-mortem分析で戦略の盲点を検証
+```
+
+---
+
+.gitのなかのファイル等、テキストファイルばっかりなはずだけど、選べない。この辺もっと他のeditorたちがどうしてるのか丁寧に調査して、実装方針立ててほしい
+
+---
+
+fileコマンドと同じことする方がいいんじゃない？fileコマンドって何してるの？
+
+---
+
+This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation.
+
+Analysis:
+Let me chronologically analyze this conversation to create a comprehensive summary.
+
+**Session Start Context:**
+- Resumed from previous conversation about MDPreview (macOS Markdown preview app)
+- Previous session had implemented: anchor fix, KaTeX, Mermaid, custom CSS, link validation, GitHub Alerts, Footnotes, heading hover links, text file support
+- FileTree.swift already had Button approach (from previous session)
+- MarkdownWebView.swift had pendingLanguage fix needed
+
+**Key sequence of events:**
+
+1. Session resumed with plan file showing extensive feature additions
+2. First fix: `pendingLanguage = fileLanguage` missing in baseURL change branch in MarkdownWebView.swift
+3. Build succeeded
+4. User reported "サイドバーでmarkdown以外のファイルが選択できないようにブロックされちゃってる"
+5. Identified root cause: `List(selection:)` system blue highlight + Button approach in List
+6. Changed to `List(selection:)` with `onChange` approach
+7. App crashed → found DispatchQueue.main.async causing SwiftUI issue
+8. Changed to single-arg onChange without reset
+9. Still crashed → found REAL crash in AppDelegate: deadlock in `applyCloseTabShortcutHints()`
+10. Fixed deadlock with `isApplyingShortcutHints` re-entrancy guard
+11. User wanted text files without extensions → added UTI fallback + codeFilenameMap
+12. User showed screenshot: sidebar still shows full blue highlight
+13. Changed to `highPriorityGesture` + plain `List {}` to remove system blue
+14. User showed target Finder sidebar screenshot  
+15. Updated FileTreeRow to match Finder style (light gray bg, accent icon, black text)
+16. Added `.envrc` to codeFilenameMap, `.keys`/`.pem`/`.crt`/`.pub` to codeExtensionMap
+17. Released v1.5.0
+18. User asked about `.git` directory files not being selectable
+19. Research agent investigated how editors detect text vs binary
+20. User asked about `file` command internals
+21. Research agent investigated `file` command: uses magic database at `/usr/share/file/magic.mgc`, 3-stage detection, but libmagic is NOT available as standalone dylib on macOS (statically linked), NUL byte check is core algorithm
+
+**Current state: User asking about file command internals, deciding implementation approach for text file detection.**
+
+Summary:
+1. Primary Request and Intent:
+   - Fix sidebar file selection bug (non-markdown files blocked)
+   - Fix app hang/deadlock (AppDelegate menu shortcut deadlock)
+   - Add text file support for extensionless files (LICENSE, .env, etc.)
+   - Make sidebar style match macOS Finder (not full blue highlight)
+   - Add .envrc, .env.keys and similar file support
+   - Release v1.5.0
+   - Research how to handle `.git` directory files (text vs binary detection)
+   - Research what `file` command does internally to understand best implementation strategy
+
+2. Key Technical Concepts:
+   - `List(selection:)` vs plain `List {}` + `highPriorityGesture` for SwiftUI macOS sidebar
+   - `NSMenu.didChangeItemNotification` re-entrancy deadlock in AppDelegate
+   - UTI (`url.resourceValues(forKeys: [.contentTypeKey])`) for file type detection
+   - Magic bytes / NUL byte detection for binary file identification
+   - `libmagic` C library (statically linked in macOS `/usr/bin/file`, NOT available as `/usr/lib/libmagic.dylib`)
+   - `codeExtensionMap` + `codeFilenameMap` as fast-path O(1) lookups
+   - `onChange(of:)` deprecation: 1-arg vs 2-arg form (macOS 13 vs 14 deployment target)
+   - `DispatchQueue.main.async { @State mutation }` causing SwiftUI crashes on macOS 15
+   - Universal binary (arm64 + x86_64) with lipo for release
+   - Apple notarization workflow (xcrun notarytool submit --wait + xcrun stapler staple)
+
+3. Files and Code Sections:
+
+   - **`Sources/MDPreviewCore/MarkdownWebView.swift`**
+     - Fixed missing `pendingLanguage = fileLanguage` in baseURL change branch
+     ```swift
+     if context.coordinator.baseURL != baseURL {
+         context.coordinator.baseURL = baseURL
+         context.coordinator.isLoaded = false
+         context.coordinator.pendingContent = markdownContent
+         context.coordinator.pendingPreserveScroll = false
+         context.coordinator.pendingCSS = customCSS
+         context.coordinator.pendingLanguage = fileLanguage  // ← ADDED
+         loadTemplate(into: webView, baseURL: baseURL)
+         return
+     }
+     ```
+
+   - **`Sources/MDPreviewCore/AppDelegate.swift`**
+     - Fixed deadlock: `applyCloseTabShortcutHints()` called `NSMenuItem.setKeyEquivalent` → triggered `NSMenu.didChangeItemNotification` → observer called `applyCloseTabShortcutHints()` again → tried to acquire `NSMenuKEUniquer` mutex already held → deadlock
+     - Fix: added `isApplyingShortcutHints` re-entrancy guard
+     ```swift
+     private var isApplyingShortcutHints = false
+
+     private func applyCloseTabShortcutHints() {
+         guard !isApplyingShortcutHints else { return }
+         isApplyingShortcutHints = true
+         defer { isApplyingShortcutHints = false }
+         // ... rest of function unchanged
+     }
+     ```
+
+   - **`Sources/MDPreviewCore/FileTree.swift`**
+     - Added `codeFilenameMap` for extensionless files
+     - Added UTI conformance fallback in `isTextFile`
+     - Added `.keys`, `.pem`, `.crt`, `.cert`, `.pub` to `codeExtensionMap`
+     - Added `.envrc` to `codeFilenameMap`
+     - Changed `List(selection:)` + Button → plain `List {}` + `highPriorityGesture`
+     - Changed `FileTreeRow` to Finder-like style (light gray bg, accent icon, black text)
+     
+     Current `FileTreeView`:
+     ```swift
+     public struct FileTreeView: View {
+         public let nodes: [FileTreeNode]
+         @ObservedObject public var workspace: Workspace
+
+         public var body: some View {
+             List {
+                 if let dirURL = workspace.directoryURL {
+                     Section(dirURL.lastPathComponent) {
+                         OutlineGroup(nodes, children: \.children) { node in
+                             FileTreeRow(node: node, isSelected: isSelected(node))
+                                 .frame(maxWidth: .infinity, alignment: .leading)
+                                 .contentShape(Rectangle())
+                                 .highPriorityGesture(TapGesture().onEnded {
+                                     guard !node.isDirectory else { return }
+                                     guard FileTreeNode.isTextFile(node.url) else { return }
+                                     workspace.openFile(node.url)
+                                 })
+                                 .contextMenu { ... }
+                         }
+                     }
+                 }
+             }
+             .listStyle(.sidebar)
+         }
+         private func isSelected(_ node: FileTreeNode) -> Bool {
+             guard let selected = workspace.selectedTab else { return false }
+             return selected.url.standardizedFileURL == node.url.standardizedFileURL
+         }
+     }
+     ```
+
+     Current `FileTreeRow`:
+     ```swift
+     struct FileTreeRow: View {
+         let node: FileTreeNode
+         let isSelected: Bool
+
+         var body: some View {
+             HStack(spacing: 7) {
+                 Image(systemName: icon)
+                     .foregroundStyle(isSelected || node.isDirectory ? Color.accentColor : Color.secondary)
+                     .font(.system(size: 14))
+                     .frame(width: 16, alignment: .center)
+                 Text(node.name)
+                     .font(.system(size: 13))
+                     .foregroundStyle(Color.primary)
+                     .lineLimit(1)
+                     .truncationMode(.middle)
+             }
+             .padding(.horizontal, 6)
+             .padding(.vertical, 3)
+             .frame(maxWidth: .infinity, alignment: .leading)
+             .background(
+                 isSelected
+                     ? RoundedRectangle(cornerRadius: 6).fill(Color.primary.opacity(0.08))
+                     : nil
+             )
+             .opacity(node.isDirectory || isText ? 1.0 : 0.5)
+         }
+     }
+     ```
+
+     Current `isTextFile` with 3-stage detection:
+     ```swift
+     public static func isTextFile(_ url: URL) -> Bool {
+         let ext = url.pathExtension.lowercased()
+         let name = url.lastPathComponent.lowercased()
+         if markdownExtensions.contains(ext) { return true }
+         if codeExtensionMap[ext] != nil { return true }
+         if codeFilenameMap[name] != nil { return true }
+         // UTI fallback
+         if let values = try? url.resourceValues(forKeys: [.contentTypeKey]),
+            let contentType = values.contentType {
+             return contentType.conforms(to: .text)
+         }
+         return false
+     }
+     ```
+
+   - **`Supporting/Info.plist`** — bumped to v1.5.0
+   - **`Supporting/mdpreview`** — bumped to v1.5.0
+   - **`~/homebrew-tap/Casks/mdpreview.rb`** — updated to v1.5.0, sha256 `b0e6a72de308365f57a3704c03950dc58927d694641249bb51a9ffc1baea6c71`
+
+4. Errors and Fixes:
+   - **App hang/deadlock on launch**: `applyCloseTabShortcutHints()` → `setKeyEquivalent` → `NSMenu.didChangeItemNotification` → recursive call → `NSMenuKEUniquer` mutex deadlock. Fixed with `isApplyingShortcutHints` bool guard.
+   - **`onChange` 2-arg form compile error**: Used `{ _, newValue in }` which requires macOS 14, but deployment target is macOS 13. Fixed by reverting to single-arg `{ newNodeID in }` form.
+   - **`DispatchQueue.main.async { selectedNodeID = nil }` crash**: On macOS 15, mutating `@State` inside `onChange` via async dispatch causes SwiftUI assertion. Fixed by removing the reset entirely.
+   - **System blue List selection highlight**: `.listRowBackground(Color.clear)` does not suppress `NSTableRowView`'s system selection drawing. Fixed by switching from `List(selection:)` to plain `List {}` + `highPriorityGesture`.
+   - **UTI returning wrong type for `.keys`**: macOS maps `.keys` to binary key format, not `public.text`. Fixed by adding `"keys": "bash"` to `codeExtensionMap`.
+
+5. Problem Solving:
+   - **Sidebar tap not working**: Went through 3 approaches: (1) `onTapGesture` - unreliable in List+OutlineGroup, (2) `Button(.plain)` - List intercepts gestures, (3) `List(selection:)` + onChange - worked but caused blue highlight, (4) `highPriorityGesture` on plain `List {}` - final working solution
+   - **Text file detection for extensionless files**: 3-stage approach: extension map → filename map → UTI conformance. UTI fails for git files, keys, etc., which is why NUL byte detection is being researched as next improvement
+   - **`.git` directory files**: Research shows they're plain text (HEAD, config, COMMIT_EDITMSG) but current UTI check fails for them. `file` command uses 3-stage detection with magic database, but `libmagic` is statically linked on macOS and not available as a standalone dylib
+
+6. All user messages:
+   - "サイドバーでmarkdown以外のファイルが選択できないようにブロックされちゃってる"
+   - "実際に操作して確認までやってほしい"
+   - "サイドバーで.md以外のファイルの選択ができないかも"
+   - "アプリがクラッシュする"
+   - "まだ、buildしたやつだよね？/Users/kazu42/dev/mdpreview/build/MDPreview.app/Contents/MacOS/MDPreview これ起動すると、強制終了とappleへのレポート見たいなやつ出てきて動作確認できない"
+   - [Screenshot of blue selection in sidebar] "まだ強い"
+   - [Screenshots showing Finder sidebar as target] "これだよ？" "finder"
+   - ".env.keysとかもテキストファイルな気がするんだけど、これは、システムコール側の判断の問題かな？"
+   - ".env.keysが開けない"
+   - ".envrcも？"
+   - "ありがとう！リリースして。skills確認して"
+   - ".gitのなかのファイル等、テキストファイルばっかりなはずだけど、選べない。この辺もっと他のeditorたちがどうしてるのか丁寧に調査して、実装方針立ててほしい"
+   - "fileコマンドと同じことする方がいいんじゃない？fileコマンドって何してるの？"
+
+7. Pending Tasks:
+   - Implement NUL byte detection (or decide on approach) for `.git` directory files and other files with unknown extensions
+   - The key decision: use NUL byte check (fast, no deps) vs `file` subprocess (accurate but ~2ms/file) vs `libmagic` (not available on stock macOS)
+
+8. Current Work:
+   Research into `file` command internals was just completed. Key findings:
+   - `file` uses 3-stage detection: filesystem tests → magic pattern database (`/usr/share/file/magic.mgc`, 7.3MB) → text encoding detection
+   - NUL byte check is core: `printf "hello\x00world" | file -` → "data" (binary)
+   - **`libmagic` is NOT available as `/usr/lib/libmagic.dylib` on macOS** — `/usr/bin/file` is statically linked, so Swift apps cannot call it directly without Homebrew
+   - `file` subprocess takes ~1.7ms average per invocation
+   - NUL byte check takes ~0.05ms but cannot detect specific types
+   - For "is this displayable as text?", both approaches ultimately use NUL byte logic
+
+9. Optional Next Step:
+   The user asked "fileコマンドと同じことする方がいいんじゃない？fileコマンドって何してるの？" — now that research is complete, the next step is to present the implementation recommendation and implement NUL byte detection as the replacement for UTI fallback in `isTextFile()`:
+
+   Replace the current UTI fallback:
+   ```swift
+   // Current (unreliable for .git files, .keys, etc.)
+   if let values = try? url.resourceValues(forKeys: [.contentTypeKey]),
+      let contentType = values.contentType {
+       return contentType.conforms(to: .text)
+   }
+   ```
+   With NUL byte detection (same algorithm as `file` command's Stage 3):
+   ```swift
+   // New: read first 512 bytes, check for NUL byte (same as file command)
+   if let handle = try? FileHandle(forReadingFrom: url) {
+       defer { try? handle.close() }
+       let data = handle.readData(ofLength: 512)
+       if !data.isEmpty && !data.contains(0) { return true }
+   }
+   return false
+   ```
+   This would correctly handle `.git/HEAD`, `.git/config`, `.git/COMMIT_EDITMSG` (no NUL bytes → text) while blocking `.git/objects/` pack files (contain NUL bytes → binary). `libmagic` is not viable on stock macOS without Homebrew.
+
+If you need specific details from before compaction (like exact code snippets, error messages, or content you generated), read the full transcript at: /Users/kazu42/.claude/projects/-Users-kazu42-dev-mdpreview/d169b4f4-088f-453c-a45f-6bcdadd0a97d.jsonl
+Please continue the conversation from where we left off without asking the user any further questions. Continue with the last task that you were asked to work on.
+
+---
+
+rust製のfileコマンド実装とか参考にしたら、もっと高速で無駄なく、fileの種類を判断するアルゴリズムとかあったりしない？web searchとか使ってもっと丁寧に調べてほしい
+
+---
+
+おけ。ありがとう
+
+---
+
+buildしなおした？
+
+---
+
+リリースして

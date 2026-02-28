@@ -1,0 +1,34 @@
+{
+  "cli_version": "0.4.7",
+  "checkpoint_id": "8c16791cd902",
+  "session_id": "d169b4f4-088f-453c-a45f-6bcdadd0a97d",
+  "strategy": "manual-commit",
+  "created_at": "2026-02-28T14:48:39.544805Z",
+  "branch": "main",
+  "checkpoints_count": 2,
+  "files_touched": [
+    "Sources/MDPreviewCore/FileTree.swift",
+    "Supporting/Info.plist",
+    "Supporting/mdpreview"
+  ],
+  "agent": "Claude Code",
+  "turn_id": "13f5d9a6ab36",
+  "checkpoint_transcript_start": 3614,
+  "transcript_lines_at_start": 3614,
+  "token_usage": {
+    "input_tokens": 70,
+    "cache_creation_tokens": 147069,
+    "cache_read_tokens": 5716143,
+    "output_tokens": 21389,
+    "api_call_count": 56
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-02-28T14:48:38.627598Z",
+    "agent_lines": 59,
+    "human_added": 0,
+    "human_modified": 3,
+    "human_removed": 0,
+    "total_committed": 62,
+    "agent_percentage": 95.16129032258065
+  }
+}
