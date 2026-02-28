@@ -66,6 +66,12 @@ public final class Workspace: ObservableObject {
         selectedTab?.directoryURL ?? directoryURL
     }
 
+    /// highlight.js language for the currently selected file, or "markdown".
+    public var fileLanguage: String {
+        guard let tab = selectedTab else { return "markdown" }
+        return FileTreeNode.language(for: tab.url)
+    }
+
     private let fileWatcher = FileWatcher()
 
     public init() {
@@ -275,15 +281,10 @@ public final class Workspace: ObservableObject {
 
     public func showOpenPanel() {
         let panel = NSOpenPanel()
-        let mdTypes: [UTType] = [
-            UTType(filenameExtension: "md"),
-            UTType(filenameExtension: "markdown")
-        ].compactMap { $0 }
-
-        panel.allowedContentTypes = mdTypes.isEmpty ? [.plainText] : mdTypes + [.plainText]
+        panel.allowedContentTypes = [.text, .sourceCode, .plainText]
         panel.allowsMultipleSelection = true
         panel.canChooseDirectories = true
-        panel.message = "Select Markdown files or a directory"
+        panel.message = "Select files or a directory"
 
         if panel.runModal() == .OK {
             for url in panel.urls {

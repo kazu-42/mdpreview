@@ -37,7 +37,8 @@ public struct MainView: View {
                             markdownContent: workspace.markdownContent,
                             baseURL: workspace.currentFileDirectory,
                             contentID: workspace.selectedTabID,
-                            customCSS: workspace.customCSS
+                            customCSS: workspace.customCSS,
+                            fileLanguage: workspace.fileLanguage
                         )
                     } else {
                         EmptyStateView()

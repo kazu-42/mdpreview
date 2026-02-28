@@ -51,7 +51,13 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    private var isApplyingShortcutHints = false
+
     private func applyCloseTabShortcutHints() {
+        guard !isApplyingShortcutHints else { return }
+        isApplyingShortcutHints = true
+        defer { isApplyingShortcutHints = false }
+
         guard let windowMenu = NSApp.mainMenu?.item(withTitle: "Window")?.submenu else { return }
         for item in windowMenu.items {
             switch item.title {

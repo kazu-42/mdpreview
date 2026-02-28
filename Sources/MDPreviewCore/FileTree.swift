@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 // MARK: - Model
 
@@ -18,6 +19,98 @@ public struct FileTreeNode: Identifiable, Hashable {
     }
 
     static let markdownExtensions: Set<String> = ["md", "markdown", "mdown", "mkd"]
+
+    /// Maps file extensions to highlight.js language identifiers.
+    static let codeExtensionMap: [String: String] = [
+        "swift": "swift", "m": "objectivec", "mm": "objectivec",
+        "py": "python", "pyw": "python",
+        "js": "javascript", "mjs": "javascript", "cjs": "javascript",
+        "ts": "typescript",
+        "jsx": "javascript", "tsx": "typescript",
+        "go": "go",
+        "rs": "rust",
+        "java": "java", "kt": "kotlin", "kts": "kotlin",
+        "rb": "ruby",
+        "php": "php",
+        "cs": "csharp",
+        "cpp": "cpp", "cc": "cpp", "cxx": "cpp",
+        "c": "c", "h": "c", "hpp": "cpp",
+        "sh": "bash", "bash": "bash", "zsh": "bash", "fish": "bash",
+        "json": "json", "jsonc": "json",
+        "yaml": "yaml", "yml": "yaml",
+        "toml": "ini",
+        "xml": "xml", "svg": "xml",
+        "html": "html", "htm": "html",
+        "css": "css", "scss": "scss", "less": "less",
+        "sql": "sql",
+        "dockerfile": "dockerfile",
+        "tf": "hcl", "hcl": "hcl",
+        "graphql": "graphql", "gql": "graphql",
+        "vue": "xml", "svelte": "xml",
+        "r": "r",
+        "lua": "lua",
+        "pl": "perl", "pm": "perl",
+        "ex": "elixir", "exs": "elixir",
+        "erl": "erlang",
+        "hs": "haskell",
+        "clj": "clojure", "cljs": "clojure",
+        "scala": "scala",
+        "dart": "dart",
+        "txt": "plaintext", "log": "plaintext",
+        "conf": "apache", "ini": "ini", "env": "bash",
+        "keys": "bash",
+        "makefile": "makefile", "mk": "makefile",
+        "proto": "protobuf",
+        "pem": "plaintext", "crt": "plaintext", "cert": "plaintext",
+        "pub": "plaintext",
+    ]
+
+    /// Maps extensionless filenames to highlight.js language identifiers.
+    static let codeFilenameMap: [String: String] = [
+        "makefile": "makefile", "dockerfile": "dockerfile",
+        "vagrantfile": "ruby", "gemfile": "ruby", "rakefile": "ruby", "brewfile": "ruby",
+        "podfile": "ruby",
+        "procfile": "yaml",
+        "justfile": "makefile",
+        ".env": "bash", ".env.local": "bash", ".env.example": "bash", ".envrc": "bash",
+        ".gitignore": "plaintext", ".gitattributes": "plaintext", ".gitmodules": "ini",
+        ".dockerignore": "plaintext",
+        ".editorconfig": "ini",
+        ".htaccess": "apache",
+        ".npmrc": "ini", ".yarnrc": "yaml", ".nvmrc": "plaintext",
+        ".ruby-version": "plaintext", ".node-version": "plaintext", ".python-version": "plaintext",
+        ".tool-versions": "plaintext",
+        "license": "plaintext", "licence": "plaintext",
+        "readme": "plaintext", "changelog": "plaintext", "authors": "plaintext",
+        "contributors": "plaintext", "notice": "plaintext", "copying": "plaintext",
+        "todo": "plaintext", "notes": "plaintext",
+    ]
+
+    /// Returns the highlight.js language for the given URL, or "markdown" for markdown files.
+    public static func language(for url: URL) -> String {
+        let ext = url.pathExtension.lowercased()
+        let name = url.lastPathComponent.lowercased()
+        if markdownExtensions.contains(ext) { return "markdown" }
+        if let lang = codeFilenameMap[name] { return lang }
+        if let lang = codeExtensionMap[ext] { return lang }
+        return "plaintext"
+    }
+
+    /// Returns true if the file can be opened as text in MDPreview.
+    /// Strategy: extension map → filename map → UTI conformance (macOS built-in, ~microseconds).
+    public static func isTextFile(_ url: URL) -> Bool {
+        let ext = url.pathExtension.lowercased()
+        let name = url.lastPathComponent.lowercased()
+        if markdownExtensions.contains(ext) { return true }
+        if codeExtensionMap[ext] != nil { return true }
+        if codeFilenameMap[name] != nil { return true }
+        // UTI fallback: covers LICENSE, .env, unknown text files, etc.
+        if let values = try? url.resourceValues(forKeys: [.contentTypeKey]),
+           let contentType = values.contentType {
+            return contentType.conforms(to: .text)
+        }
+        return false
+    }
 
     // Note: Hidden files/directories (starting with .) are now shown
     // Only skip common large/generated directories
@@ -82,18 +175,17 @@ public struct FileTreeView: View {
                 Section(dirURL.lastPathComponent) {
                     OutlineGroup(nodes, children: \.children) { node in
                         FileTreeRow(node: node, isSelected: isSelected(node))
+                            .frame(maxWidth: .infinity, alignment: .leading)
                             .contentShape(Rectangle())
-                            .onTapGesture {
+                            .highPriorityGesture(TapGesture().onEnded {
                                 guard !node.isDirectory else { return }
-                                let ext = node.url.pathExtension.lowercased()
-                                guard FileTreeNode.markdownExtensions.contains(ext) else { return }
+                                guard FileTreeNode.isTextFile(node.url) else { return }
                                 workspace.openFile(node.url)
-                            }
+                            })
                             .contextMenu {
                                 if !node.isDirectory {
                                     Button {
-                                        let ext = node.url.pathExtension.lowercased()
-                                        if FileTreeNode.markdownExtensions.contains(ext) {
+                                        if FileTreeNode.isTextFile(node.url) {
                                             workspace.openFile(node.url)
                                         }
                                     } label: {
@@ -133,22 +225,35 @@ struct FileTreeRow: View {
     let node: FileTreeNode
     let isSelected: Bool
 
-    private var isMarkdown: Bool {
-        FileTreeNode.markdownExtensions.contains(node.url.pathExtension.lowercased())
+    private var isText: Bool {
+        FileTreeNode.isTextFile(node.url)
+    }
+
+    private var icon: String {
+        node.isDirectory ? "folder.fill" : (isText ? "doc.text" : "doc")
     }
 
     var body: some View {
-        HStack(spacing: 6) {
-            Image(systemName: node.isDirectory ? "folder.fill" : (isMarkdown ? "doc.text" : "doc"))
-                .foregroundColor(node.isDirectory ? .accentColor : .secondary)
-                .font(.system(size: 13))
+        HStack(spacing: 7) {
+            Image(systemName: icon)
+                .foregroundStyle(isSelected || node.isDirectory ? Color.accentColor : Color.secondary)
+                .font(.system(size: 14))
+                .frame(width: 16, alignment: .center)
             Text(node.name)
                 .font(.system(size: 13))
-                .foregroundColor(node.isDirectory || isMarkdown ? .primary : .secondary)
+                .foregroundStyle(Color.primary)
                 .lineLimit(1)
                 .truncationMode(.middle)
         }
-        .padding(.vertical, 1)
-        .opacity(node.isDirectory || isMarkdown ? 1.0 : 0.6)
+        .padding(.horizontal, 6)
+        .padding(.vertical, 3)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            isSelected
+                ? RoundedRectangle(cornerRadius: 6)
+                    .fill(Color.primary.opacity(0.08))
+                : nil
+        )
+        .opacity(node.isDirectory || isText ? 1.0 : 0.5)
     }
 }

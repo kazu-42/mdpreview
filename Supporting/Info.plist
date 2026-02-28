@@ -42,6 +42,44 @@
             <key>LSHandlerRank</key>
             <string>Alternate</string>
         </dict>
+        <dict>
+            <key>CFBundleTypeExtensions</key>
+            <array>
+                <string>swift</string>
+                <string>py</string>
+                <string>js</string>
+                <string>ts</string>
+                <string>jsx</string>
+                <string>tsx</string>
+                <string>go</string>
+                <string>rs</string>
+                <string>java</string>
+                <string>kt</string>
+                <string>rb</string>
+                <string>php</string>
+                <string>cs</string>
+                <string>cpp</string>
+                <string>c</string>
+                <string>h</string>
+                <string>sh</string>
+                <string>json</string>
+                <string>yaml</string>
+                <string>yml</string>
+                <string>toml</string>
+                <string>xml</string>
+                <string>html</string>
+                <string>css</string>
+                <string>scss</string>
+                <string>sql</string>
+                <string>txt</string>
+            </array>
+            <key>CFBundleTypeName</key>
+            <string>Source Code</string>
+            <key>CFBundleTypeRole</key>
+            <string>Viewer</string>
+            <key>LSHandlerRank</key>
+            <string>Alternate</string>
+        </dict>
     </array>
 </dict>
 </plist>

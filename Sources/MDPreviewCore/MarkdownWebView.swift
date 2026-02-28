@@ -6,12 +6,14 @@ public struct MarkdownWebView: NSViewRepresentable {
     public let baseURL: URL?
     public let contentID: UUID?
     public let customCSS: String
+    public let fileLanguage: String
 
-    public init(markdownContent: String, baseURL: URL? = nil, contentID: UUID? = nil, customCSS: String = "") {
+    public init(markdownContent: String, baseURL: URL? = nil, contentID: UUID? = nil, customCSS: String = "", fileLanguage: String = "markdown") {
         self.markdownContent = markdownContent
         self.baseURL = baseURL
         self.contentID = contentID
         self.customCSS = customCSS
+        self.fileLanguage = fileLanguage
     }
 
     public func makeCoordinator() -> Coordinator {
@@ -31,6 +33,7 @@ public struct MarkdownWebView: NSViewRepresentable {
         context.coordinator.webView = webView
         context.coordinator.pendingContent = markdownContent
         context.coordinator.pendingCSS = customCSS
+        context.coordinator.pendingLanguage = fileLanguage
         context.coordinator.baseURL = baseURL
         loadTemplate(into: webView, baseURL: baseURL)
 
@@ -48,6 +51,7 @@ public struct MarkdownWebView: NSViewRepresentable {
             context.coordinator.pendingContent = markdownContent
             context.coordinator.pendingPreserveScroll = false
             context.coordinator.pendingCSS = customCSS
+            context.coordinator.pendingLanguage = fileLanguage
             loadTemplate(into: webView, baseURL: baseURL)
             return
         }
@@ -62,6 +66,7 @@ public struct MarkdownWebView: NSViewRepresentable {
             context.coordinator.pendingContent = markdownContent
             context.coordinator.pendingPreserveScroll = !tabChanged
             context.coordinator.pendingCSS = customCSS
+            context.coordinator.pendingLanguage = fileLanguage
         }
     }
 
@@ -128,25 +133,26 @@ public struct MarkdownWebView: NSViewRepresentable {
     }
 
     private func evaluateRender(webView: WKWebView, content: String, baseURL: URL? = nil, preserveScroll: Bool = true) {
-        var processedContent = content
-
-        // Convert relative image paths to absolute file URLs
-        if let base = baseURL {
-            processedContent = Self.rewriteRelativePaths(in: content, baseURL: base)
-        }
-
-        let escaped = MarkdownWebView.escapeForJavaScript(processedContent)
-        let basePath = baseURL?.path ?? ""
-        webView.evaluateJavaScript("render(`\(escaped)`, `\(basePath)`, \(preserveScroll))")
-
-        // Mark broken links using the original (non-rewritten) content
-        if let base = baseURL {
-            let brokenPaths = MarkdownWebView.extractLocalLinks(in: content, baseURL: base)
-            let brokenAbsoluteURLs = brokenPaths.map { "file://\(base.path)/\($0)" }
-            if let jsonData = try? JSONEncoder().encode(brokenAbsoluteURLs),
-               let jsonString = String(data: jsonData, encoding: .utf8) {
-                webView.evaluateJavaScript("markBrokenLinks(\(jsonString))")
+        if fileLanguage == "markdown" {
+            var processedContent = content
+            if let base = baseURL {
+                processedContent = Self.rewriteRelativePaths(in: content, baseURL: base)
             }
+            let escaped = MarkdownWebView.escapeForJavaScript(processedContent)
+            let basePath = baseURL?.path ?? ""
+            webView.evaluateJavaScript("render(`\(escaped)`, `\(basePath)`, \(preserveScroll))")
+            if let base = baseURL {
+                let brokenPaths = MarkdownWebView.extractLocalLinks(in: content, baseURL: base)
+                let brokenAbsoluteURLs = brokenPaths.map { "file://\(base.path)/\($0)" }
+                if let jsonData = try? JSONEncoder().encode(brokenAbsoluteURLs),
+                   let jsonString = String(data: jsonData, encoding: .utf8) {
+                    webView.evaluateJavaScript("markBrokenLinks(\(jsonString))")
+                }
+            }
+        } else {
+            let escaped = MarkdownWebView.escapeForJavaScript(content)
+            let lang = fileLanguage.replacingOccurrences(of: "`", with: "\\`")
+            webView.evaluateJavaScript("renderCode(`\(escaped)`, `\(lang)`)")
         }
     }
 
@@ -271,6 +277,7 @@ public struct MarkdownWebView: NSViewRepresentable {
         public var pendingContent: String?
         public var pendingPreserveScroll = true
         public var pendingCSS: String = ""
+        public var pendingLanguage: String = "markdown"
         public var currentCustomCSS: String = ""
         public var baseURL: URL?
         public var currentContentID: UUID?
@@ -310,17 +317,31 @@ public struct MarkdownWebView: NSViewRepresentable {
             if let content = pendingContent {
                 let preserveScroll = pendingPreserveScroll
                 let css = pendingCSS
+                let language = pendingLanguage
                 pendingContent = nil
                 pendingPreserveScroll = true
 
-                // Convert relative paths to absolute file URLs
-                var processedContent = content
-                if let base = baseURL {
-                    processedContent = MarkdownWebView.rewriteRelativePaths(in: content, baseURL: base)
+                if language == "markdown" {
+                    var processedContent = content
+                    if let base = baseURL {
+                        processedContent = MarkdownWebView.rewriteRelativePaths(in: content, baseURL: base)
+                    }
+                    let escaped = MarkdownWebView.escapeForJavaScript(processedContent)
+                    let basePath = baseURL?.path ?? ""
+                    webView.evaluateJavaScript("render(`\(escaped)`, `\(basePath)`, \(preserveScroll))")
+                    if let base = baseURL {
+                        let brokenPaths = MarkdownWebView.extractLocalLinks(in: content, baseURL: base)
+                        let brokenAbsoluteURLs = brokenPaths.map { "file://\(base.path)/\($0)" }
+                        if let jsonData = try? JSONEncoder().encode(brokenAbsoluteURLs),
+                           let jsonString = String(data: jsonData, encoding: .utf8) {
+                            webView.evaluateJavaScript("markBrokenLinks(\(jsonString))")
+                        }
+                    }
+                } else {
+                    let escaped = MarkdownWebView.escapeForJavaScript(content)
+                    let lang = language.replacingOccurrences(of: "`", with: "\\`")
+                    webView.evaluateJavaScript("renderCode(`\(escaped)`, `\(lang)`)")
                 }
-                let escaped = MarkdownWebView.escapeForJavaScript(processedContent)
-                let basePath = baseURL?.path ?? ""
-                webView.evaluateJavaScript("render(`\(escaped)`, `\(basePath)`, \(preserveScroll))")
 
                 // Apply custom CSS
                 currentCustomCSS = css
@@ -328,16 +349,6 @@ public struct MarkdownWebView: NSViewRepresentable {
                     .replacingOccurrences(of: "\\", with: "\\\\")
                     .replacingOccurrences(of: "`", with: "\\`")
                 webView.evaluateJavaScript("applyCustomCSS(`\(escapedCSS)`)")
-
-                // Mark broken links using original (non-rewritten) content
-                if let base = baseURL {
-                    let brokenPaths = MarkdownWebView.extractLocalLinks(in: content, baseURL: base)
-                    let brokenAbsoluteURLs = brokenPaths.map { "file://\(base.path)/\($0)" }
-                    if let jsonData = try? JSONEncoder().encode(brokenAbsoluteURLs),
-                       let jsonString = String(data: jsonData, encoding: .utf8) {
-                        webView.evaluateJavaScript("markBrokenLinks(\(jsonString))")
-                    }
-                }
             }
         }
 

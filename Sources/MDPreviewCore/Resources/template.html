@@ -172,6 +172,73 @@
             cursor: not-allowed;
             opacity: 0.7;
         }
+
+        /* GitHub Alerts */
+        .gh-alert {
+            border-left: 4px solid;
+            border-radius: 6px;
+            padding: 12px 16px;
+            margin-bottom: 16px;
+        }
+        .gh-alert > :last-child { margin-bottom: 0; }
+        .gh-alert-title {
+            font-weight: 600;
+            margin-top: 0;
+            margin-bottom: 8px;
+        }
+        @media (prefers-color-scheme: light) {
+            .gh-alert-note      { border-color: #1f6feb; background: rgba(31,111,235,0.1); }
+            .gh-alert-tip       { border-color: #238636; background: rgba(35,134,54,0.1); }
+            .gh-alert-important { border-color: #8957e5; background: rgba(137,87,229,0.1); }
+            .gh-alert-warning   { border-color: #9e6a03; background: rgba(158,106,3,0.1); }
+            .gh-alert-caution   { border-color: #da3633; background: rgba(218,54,51,0.1); }
+            .gh-alert-note      .gh-alert-title { color: #0969da; }
+            .gh-alert-tip       .gh-alert-title { color: #1a7f37; }
+            .gh-alert-important .gh-alert-title { color: #8250df; }
+            .gh-alert-warning   .gh-alert-title { color: #9a6700; }
+            .gh-alert-caution   .gh-alert-title { color: #cf222e; }
+        }
+        @media (prefers-color-scheme: dark) {
+            .gh-alert-note      { border-color: #1f6feb; background: rgba(31,111,235,0.15); }
+            .gh-alert-tip       { border-color: #3fb950; background: rgba(63,185,80,0.15); }
+            .gh-alert-important { border-color: #a371f7; background: rgba(163,113,247,0.15); }
+            .gh-alert-warning   { border-color: #d29922; background: rgba(210,153,34,0.15); }
+            .gh-alert-caution   { border-color: #f85149; background: rgba(248,81,73,0.15); }
+            .gh-alert-note      .gh-alert-title { color: #58a6ff; }
+            .gh-alert-tip       .gh-alert-title { color: #3fb950; }
+            .gh-alert-important .gh-alert-title { color: #a371f7; }
+            .gh-alert-warning   .gh-alert-title { color: #d29922; }
+            .gh-alert-caution   .gh-alert-title { color: #f85149; }
+        }
+
+        /* Footnotes */
+        .footnotes {
+            margin-top: 32px;
+            font-size: 0.875em;
+            opacity: 0.85;
+        }
+        .footnotes ol { padding-left: 1.5em; }
+        .footnotes li { margin-bottom: 8px; }
+        .footnotes li p { margin-bottom: 0; }
+        sup.footnote-ref { line-height: 0; }
+        sup.footnote-ref a { text-decoration: none; padding: 0 2px; }
+        a.footnote-back { margin-left: 4px; text-decoration: none; }
+
+        /* Heading anchor links */
+        .heading-anchor {
+            opacity: 0;
+            font-size: 0.75em;
+            font-weight: normal;
+            margin-left: 8px;
+            text-decoration: none;
+            color: inherit;
+            transition: opacity 0.15s;
+            vertical-align: middle;
+        }
+        h1:hover .heading-anchor, h2:hover .heading-anchor,
+        h3:hover .heading-anchor, h4:hover .heading-anchor,
+        h5:hover .heading-anchor, h6:hover .heading-anchor { opacity: 0.4; }
+        .heading-anchor:hover { opacity: 0.8 !important; }
     </style>
 </head>
 <body>
@@ -194,6 +261,54 @@
             }
         }, true);
 
+        // Preprocess footnotes before marked parsing (numbers in reference order)
+        function preprocessFootnotes(markdown) {
+            var defs = {};
+            var order = [];
+            var counter = 0;
+
+            // Extract definitions: [^id]: text  (removes them from markdown)
+            markdown = markdown.replace(/^\[\^([^\]\n]+)\]:\s*(.+)$/gm, function(_, id, text) {
+                if (!defs[id]) defs[id] = { text: text.trim() };
+                return '';
+            });
+
+            // Replace inline references, assigning numbers in appearance order
+            markdown = markdown.replace(/\[\^([^\]\n]+)\]/g, function(_, id) {
+                if (!defs[id]) defs[id] = { text: '' };
+                if (defs[id].num === undefined) {
+                    counter++;
+                    defs[id].num = counter;
+                    order.push(id);
+                }
+                var num = defs[id].num;
+                return '<sup class="footnote-ref"><a href="#fn-' + id +
+                       '" id="fnref-' + id + '">' + num + '</a></sup>';
+            });
+
+            return { markdown: markdown, defs: defs, order: order };
+        }
+
+        // Convert blockquotes starting with [!TYPE] into GitHub-style alerts
+        function processAlerts(container) {
+            var icons = { NOTE: 'ℹ️', TIP: '💡', IMPORTANT: '🔔', WARNING: '⚠️', CAUTION: '🔴' };
+            var labels = { NOTE: 'Note', TIP: 'Tip', IMPORTANT: 'Important', WARNING: 'Warning', CAUTION: 'Caution' };
+            container.querySelectorAll('blockquote').forEach(function(bq) {
+                var firstP = bq.querySelector('p');
+                if (!firstP) return;
+                var m = /^\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]/i.exec(firstP.textContent);
+                if (!m) return;
+                var type = m[1].toUpperCase();
+                firstP.innerHTML = firstP.innerHTML.replace(/^\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]\s*/i, '');
+                if (!firstP.textContent.trim()) firstP.remove();
+                bq.className = 'gh-alert gh-alert-' + type.toLowerCase();
+                var title = document.createElement('p');
+                title.className = 'gh-alert-title';
+                title.textContent = icons[type] + ' ' + labels[type];
+                bq.insertBefore(title, bq.firstChild);
+            });
+        }
+
         function render(markdown, basePath, preserveScroll) {
             // Set base URL for relative path resolution (images, links)
             if (basePath) {
@@ -213,15 +328,52 @@
                 scrollHeight = document.documentElement.scrollHeight;
             }
 
-            var html = marked.parse(markdown || '');
-            document.getElementById('content').innerHTML = html;
+            // Preprocess footnotes before rendering
+            var fnResult = preprocessFootnotes(markdown || '');
+            var html = marked.parse(fnResult.markdown);
+            var content = document.getElementById('content');
+            content.innerHTML = html;
 
-            // Add IDs to headings for anchor links
+            // Post-process alerts
+            processAlerts(content);
+
+            // Append footnote section
+            if (fnResult.order.length > 0) {
+                var section = document.createElement('section');
+                section.className = 'footnotes';
+                var hr = document.createElement('hr');
+                section.appendChild(hr);
+                var ol = document.createElement('ol');
+                fnResult.order.forEach(function(id) {
+                    var fn = fnResult.defs[id];
+                    var li = document.createElement('li');
+                    li.id = 'fn-' + id;
+                    li.innerHTML = fn.text + ' <a href="#fnref-' + id + '" class="footnote-back">↩</a>';
+                    ol.appendChild(li);
+                });
+                section.appendChild(ol);
+                content.appendChild(section);
+            }
+
+            // Add IDs + hover anchor links to headings (GitHub-compatible algorithm)
+            var slugCounts = {};
             document.querySelectorAll('h1, h2, h3, h4, h5, h6').forEach(function(heading) {
                 var slug = heading.textContent.toLowerCase()
-                    .replace(/[^a-z0-9\s-]/g, '')
+                    .replace(/[^\p{L}\p{N}\s-]/gu, '')
                     .replace(/\s+/g, '-');
-                heading.id = slug;
+                var finalSlug = slug;
+                if (slugCounts[slug] !== undefined) {
+                    slugCounts[slug]++;
+                    finalSlug = slug + '-' + slugCounts[slug];
+                } else {
+                    slugCounts[slug] = 0;
+                }
+                heading.id = finalSlug;
+                var anchor = document.createElement('a');
+                anchor.className = 'heading-anchor';
+                anchor.href = '#' + finalSlug;
+                anchor.textContent = '#';
+                heading.appendChild(anchor);
             });
 
             // Apply syntax highlighting to code blocks (skip mermaid)
@@ -285,6 +437,23 @@
                     link.title = 'File not found: ' + href;
                 }
             });
+        }
+
+        function renderCode(content, language) {
+            var container = document.getElementById('content');
+            var pre = document.createElement('pre');
+            var code = document.createElement('code');
+            if (language && language !== 'plaintext') {
+                code.className = 'language-' + language;
+            }
+            code.textContent = content;
+            pre.appendChild(code);
+            container.innerHTML = '';
+            container.appendChild(pre);
+            if (language && language !== 'plaintext') {
+                hljs.highlightElement(code);
+            }
+            window.scrollTo(0, 0);
         }
 
         function applyCustomCSS(css) {
