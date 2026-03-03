@@ -224,22 +224,8 @@ struct ZoomBarView: View {
     @ObservedObject var workspace: Workspace
 
     var body: some View {
-        HStack(spacing: 8) {
-            // Zoom out
-            Button {
-                workspace.zoomOut()
-            } label: {
-                Image(systemName: "minus.magnifyingglass")
-                    .font(.system(size: 12))
-            }
-            .buttonStyle(.plain)
-            .foregroundColor(workspace.zoomLevel <= 0.5 ? Color.secondary.opacity(0.4) : Color.secondary)
-            .disabled(workspace.zoomLevel <= 0.5)
-            .help("Zoom Out (⌘-)")
-
-            Spacer()
-
-            // File path — click to reveal in Finder
+        HStack(spacing: 0) {
+            // File path (left side) — click to reveal in Finder
             if let tab = workspace.selectedTab {
                 Button {
                     NSWorkspace.shared.activateFileViewerSelecting([tab.url])
@@ -256,17 +242,52 @@ struct ZoomBarView: View {
 
             Spacer()
 
-            // Zoom in
-            Button {
-                workspace.zoomIn()
-            } label: {
-                Image(systemName: "plus.magnifyingglass")
-                    .font(.system(size: 12))
+            // Zoom controls grouped on right: [−] [100%] [+]
+            HStack(spacing: 2) {
+                Button {
+                    workspace.zoomOut()
+                } label: {
+                    Image(systemName: "minus")
+                        .font(.system(size: 11, weight: .medium))
+                        .frame(width: 24, height: 20)
+                }
+                .buttonStyle(.plain)
+                .foregroundColor(workspace.zoomLevel <= 0.5 ? Color.secondary.opacity(0.4) : Color.secondary)
+                .disabled(workspace.zoomLevel <= 0.5)
+                .help("Zoom Out (⌘-)")
+
+                Button {
+                    workspace.resetZoom()
+                } label: {
+                    Text(workspace.zoomPercent)
+                        .font(.system(size: 11, design: .monospaced))
+                        .frame(minWidth: 40)
+                        .foregroundColor(workspace.zoomLevel == 1.0 ? .secondary : .accentColor)
+                }
+                .buttonStyle(.plain)
+                .help("Actual Size (⌘0)")
+
+                Button {
+                    workspace.zoomIn()
+                } label: {
+                    Image(systemName: "plus")
+                        .font(.system(size: 11, weight: .medium))
+                        .frame(width: 24, height: 20)
+                }
+                .buttonStyle(.plain)
+                .foregroundColor(workspace.zoomLevel >= 3.0 ? Color.secondary.opacity(0.4) : Color.secondary)
+                .disabled(workspace.zoomLevel >= 3.0)
+                .help("Zoom In (⌘=)")
             }
-            .buttonStyle(.plain)
-            .foregroundColor(workspace.zoomLevel >= 3.0 ? Color.secondary.opacity(0.4) : Color.secondary)
-            .disabled(workspace.zoomLevel >= 3.0)
-            .help("Zoom In (⌘=)")
+            .padding(.horizontal, 4)
+            .background(
+                RoundedRectangle(cornerRadius: 5)
+                    .fill(Color(nsColor: .controlBackgroundColor))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 5)
+                    .stroke(Color(nsColor: .separatorColor), lineWidth: 0.5)
+            )
         }
         .padding(.horizontal, 12)
         .frame(height: 28)

@@ -45,13 +45,6 @@ public struct MarkdownWebView: NSViewRepresentable {
         context.coordinator.onZoomOut = onZoomOut
         loadTemplate(into: webView, baseURL: baseURL)
 
-        // Trackpad pinch-to-zoom
-        let magnifyGesture = NSMagnificationGestureRecognizer(
-            target: context.coordinator,
-            action: #selector(Coordinator.handleMagnification(_:))
-        )
-        webView.addGestureRecognizer(magnifyGesture)
-
         return webView
     }
 
@@ -308,7 +301,8 @@ public struct MarkdownWebView: NSViewRepresentable {
         public var onZoomIn: (() -> Void)?
         public var onZoomOut: (() -> Void)?
         private var scrollObserver: NSObjectProtocol?
-        private var lastProcessedMagnification: CGFloat = 0
+        private var magnificationMonitor: Any?
+        private var magnificationAccumulator: CGFloat = 0
 
         override init() {
             super.init()
@@ -321,31 +315,30 @@ public struct MarkdownWebView: NSViewRepresentable {
                 guard let anchor = notification.object as? String else { return }
                 self?.scrollToAnchor(anchor)
             }
+            // Use NSEvent monitor for trackpad pinch-to-zoom (more reliable than gesture recognizers on WKWebView)
+            magnificationMonitor = NSEvent.addLocalMonitorForEvents(matching: .magnify) { [weak self] event in
+                guard let self = self else { return event }
+                if event.phase.contains(.began) {
+                    self.magnificationAccumulator = 0
+                }
+                self.magnificationAccumulator += event.magnification
+                if self.magnificationAccumulator > 0.1 {
+                    self.onZoomIn?()
+                    self.magnificationAccumulator = 0
+                } else if self.magnificationAccumulator < -0.1 {
+                    self.onZoomOut?()
+                    self.magnificationAccumulator = 0
+                }
+                return event
+            }
         }
 
         deinit {
             if let observer = scrollObserver {
                 NotificationCenter.default.removeObserver(observer)
             }
-        }
-
-        @objc func handleMagnification(_ gesture: NSMagnificationGestureRecognizer) {
-            switch gesture.state {
-            case .began:
-                lastProcessedMagnification = 0
-            case .changed:
-                let delta = gesture.magnification - lastProcessedMagnification
-                if delta > 0.2 {
-                    onZoomIn?()
-                    lastProcessedMagnification = gesture.magnification
-                } else if delta < -0.2 {
-                    onZoomOut?()
-                    lastProcessedMagnification = gesture.magnification
-                }
-            case .ended, .cancelled:
-                lastProcessedMagnification = 0
-            default:
-                break
+            if let monitor = magnificationMonitor {
+                NSEvent.removeMonitor(monitor)
             }
         }
 
