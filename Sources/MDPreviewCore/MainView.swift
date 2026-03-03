@@ -40,7 +40,9 @@ public struct MainView: View {
                                 contentID: workspace.selectedTabID,
                                 customCSS: workspace.customCSS,
                                 fileLanguage: workspace.fileLanguage,
-                                zoomLevel: workspace.zoomLevel
+                                zoomLevel: workspace.zoomLevel,
+                                onZoomIn: { workspace.zoomIn() },
+                                onZoomOut: { workspace.zoomOut() }
                             )
                         } else {
                             EmptyStateView()
@@ -216,15 +218,14 @@ struct TabBarItem: View {
     }
 }
 
-// MARK: - Zoom Bar
+// MARK: - Status Bar (zoom controls + path)
 
 struct ZoomBarView: View {
     @ObservedObject var workspace: Workspace
 
     var body: some View {
-        HStack(spacing: 4) {
-            Spacer()
-
+        HStack(spacing: 8) {
+            // Zoom out
             Button {
                 workspace.zoomOut()
             } label: {
@@ -232,21 +233,30 @@ struct ZoomBarView: View {
                     .font(.system(size: 12))
             }
             .buttonStyle(.plain)
-            .foregroundColor(workspace.zoomLevel <= 0.5 ? .secondary.opacity(0.4) : .secondary)
+            .foregroundColor(workspace.zoomLevel <= 0.5 ? Color.secondary.opacity(0.4) : Color.secondary)
             .disabled(workspace.zoomLevel <= 0.5)
             .help("Zoom Out (⌘-)")
 
-            Button {
-                workspace.resetZoom()
-            } label: {
-                Text(workspace.zoomPercent)
-                    .font(.system(size: 11, design: .monospaced))
-                    .frame(minWidth: 38)
-                    .foregroundStyle(workspace.zoomLevel == 1.0 ? Color.secondary : Color.accentColor)
-            }
-            .buttonStyle(.plain)
-            .help("Actual Size (⌘0)")
+            Spacer()
 
+            // File path — click to reveal in Finder
+            if let tab = workspace.selectedTab {
+                Button {
+                    NSWorkspace.shared.activateFileViewerSelecting([tab.url])
+                } label: {
+                    Text(abbreviatedPath(tab.url))
+                        .font(.system(size: 11))
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .foregroundColor(.secondary)
+                }
+                .buttonStyle(.plain)
+                .help(tab.url.path)
+            }
+
+            Spacer()
+
+            // Zoom in
             Button {
                 workspace.zoomIn()
             } label: {
@@ -254,17 +264,22 @@ struct ZoomBarView: View {
                     .font(.system(size: 12))
             }
             .buttonStyle(.plain)
-            .foregroundColor(workspace.zoomLevel >= 3.0 ? .secondary.opacity(0.4) : .secondary)
+            .foregroundColor(workspace.zoomLevel >= 3.0 ? Color.secondary.opacity(0.4) : Color.secondary)
             .disabled(workspace.zoomLevel >= 3.0)
             .help("Zoom In (⌘=)")
-
-            Spacer()
         }
+        .padding(.horizontal, 12)
         .frame(height: 28)
         .background(Color(nsColor: .windowBackgroundColor))
         .overlay(alignment: .top) {
             Divider()
         }
+    }
+
+    private func abbreviatedPath(_ url: URL) -> String {
+        let home = NSHomeDirectory()
+        let path = url.path
+        return path.hasPrefix(home) ? "~" + path.dropFirst(home.count) : path
     }
 }
 

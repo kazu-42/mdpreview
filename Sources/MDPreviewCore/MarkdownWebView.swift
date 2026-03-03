@@ -8,14 +8,18 @@ public struct MarkdownWebView: NSViewRepresentable {
     public let customCSS: String
     public let fileLanguage: String
     public let zoomLevel: Double
+    public let onZoomIn: (() -> Void)?
+    public let onZoomOut: (() -> Void)?
 
-    public init(markdownContent: String, baseURL: URL? = nil, contentID: UUID? = nil, customCSS: String = "", fileLanguage: String = "markdown", zoomLevel: Double = 1.0) {
+    public init(markdownContent: String, baseURL: URL? = nil, contentID: UUID? = nil, customCSS: String = "", fileLanguage: String = "markdown", zoomLevel: Double = 1.0, onZoomIn: (() -> Void)? = nil, onZoomOut: (() -> Void)? = nil) {
         self.markdownContent = markdownContent
         self.baseURL = baseURL
         self.contentID = contentID
         self.customCSS = customCSS
         self.fileLanguage = fileLanguage
         self.zoomLevel = zoomLevel
+        self.onZoomIn = onZoomIn
+        self.onZoomOut = onZoomOut
     }
 
     public func makeCoordinator() -> Coordinator {
@@ -37,7 +41,16 @@ public struct MarkdownWebView: NSViewRepresentable {
         context.coordinator.pendingCSS = customCSS
         context.coordinator.pendingLanguage = fileLanguage
         context.coordinator.baseURL = baseURL
+        context.coordinator.onZoomIn = onZoomIn
+        context.coordinator.onZoomOut = onZoomOut
         loadTemplate(into: webView, baseURL: baseURL)
+
+        // Trackpad pinch-to-zoom
+        let magnifyGesture = NSMagnificationGestureRecognizer(
+            target: context.coordinator,
+            action: #selector(Coordinator.handleMagnification(_:))
+        )
+        webView.addGestureRecognizer(magnifyGesture)
 
         return webView
     }
@@ -50,6 +63,10 @@ public struct MarkdownWebView: NSViewRepresentable {
         if webView.pageZoom != zoomLevel {
             webView.pageZoom = zoomLevel
         }
+
+        // Keep pinch-zoom callbacks current
+        context.coordinator.onZoomIn = onZoomIn
+        context.coordinator.onZoomOut = onZoomOut
 
         // If base URL changed, reload template
         if context.coordinator.baseURL != baseURL {
@@ -288,7 +305,10 @@ public struct MarkdownWebView: NSViewRepresentable {
         public var currentCustomCSS: String = ""
         public var baseURL: URL?
         public var currentContentID: UUID?
+        public var onZoomIn: (() -> Void)?
+        public var onZoomOut: (() -> Void)?
         private var scrollObserver: NSObjectProtocol?
+        private var lastProcessedMagnification: CGFloat = 0
 
         override init() {
             super.init()
@@ -306,6 +326,26 @@ public struct MarkdownWebView: NSViewRepresentable {
         deinit {
             if let observer = scrollObserver {
                 NotificationCenter.default.removeObserver(observer)
+            }
+        }
+
+        @objc func handleMagnification(_ gesture: NSMagnificationGestureRecognizer) {
+            switch gesture.state {
+            case .began:
+                lastProcessedMagnification = 0
+            case .changed:
+                let delta = gesture.magnification - lastProcessedMagnification
+                if delta > 0.2 {
+                    onZoomIn?()
+                    lastProcessedMagnification = gesture.magnification
+                } else if delta < -0.2 {
+                    onZoomOut?()
+                    lastProcessedMagnification = gesture.magnification
+                }
+            case .ended, .cancelled:
+                lastProcessedMagnification = 0
+            default:
+                break
             }
         }
 
