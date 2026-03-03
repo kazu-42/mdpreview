@@ -41,6 +41,7 @@ public final class Workspace: ObservableObject {
     @AppStorage("lastDirectory") private var lastDirectoryPath: String = ""
     @AppStorage("showHiddenFiles") private var storedShowHiddenFiles: Bool = true
     @AppStorage("customCSSPath") private var storedCustomCSSPath: String = ""
+    @AppStorage("zoomLevel") public var zoomLevel: Double = 1.0
 
     /// Whether to show hidden files in the file tree
     @Published public var showHiddenFiles: Bool = true {
@@ -226,6 +227,30 @@ public final class Workspace: ObservableObject {
     public func toggleHiddenFiles() {
         showHiddenFiles.toggle()
         storedShowHiddenFiles = showHiddenFiles
+    }
+
+    // MARK: - Zoom
+
+    private static let zoomSteps: [Double] = [
+        0.5, 0.67, 0.75, 0.8, 0.9, 1.0, 1.1, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0
+    ]
+
+    public func zoomIn() {
+        let next = Self.zoomSteps.first { $0 > zoomLevel + 0.01 }
+        zoomLevel = next ?? Self.zoomSteps.last!
+    }
+
+    public func zoomOut() {
+        let prev = Self.zoomSteps.last { $0 < zoomLevel - 0.01 }
+        zoomLevel = prev ?? Self.zoomSteps.first!
+    }
+
+    public func resetZoom() {
+        zoomLevel = 1.0
+    }
+
+    public var zoomPercent: String {
+        "\(Int(zoomLevel * 100))%"
     }
 
     /// Set a new custom CSS file path and reload the CSS content.

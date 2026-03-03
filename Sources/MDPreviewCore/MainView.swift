@@ -25,31 +25,51 @@ public struct MainView: View {
                     }
                 }
         } detail: {
-            HStack(spacing: 0) {
-                // Main content
-                VStack(spacing: 0) {
-                    if workspace.tabs.count > 1 {
-                        TabBarView(workspace: workspace)
+            VStack(spacing: 0) {
+                HStack(spacing: 0) {
+                    // Main content
+                    VStack(spacing: 0) {
+                        if workspace.tabs.count > 1 {
+                            TabBarView(workspace: workspace)
+                        }
+
+                        if workspace.selectedTab != nil {
+                            MarkdownWebView(
+                                markdownContent: workspace.markdownContent,
+                                baseURL: workspace.currentFileDirectory,
+                                contentID: workspace.selectedTabID,
+                                customCSS: workspace.customCSS,
+                                fileLanguage: workspace.fileLanguage,
+                                zoomLevel: workspace.zoomLevel
+                            )
+                        } else {
+                            EmptyStateView()
+                        }
                     }
 
-                    if workspace.selectedTab != nil {
-                        MarkdownWebView(
-                            markdownContent: workspace.markdownContent,
-                            baseURL: workspace.currentFileDirectory,
-                            contentID: workspace.selectedTabID,
-                            customCSS: workspace.customCSS,
-                            fileLanguage: workspace.fileLanguage
-                        )
-                    } else {
-                        EmptyStateView()
+                    // Table of Contents sidebar
+                    if showTOC && !workspace.tocItems.isEmpty {
+                        TOCSidebarView(items: workspace.tocItems)
+                            .frame(width: 250)
+                            .background(Color(nsColor: .controlBackgroundColor))
                     }
                 }
 
-                // Table of Contents sidebar
-                if showTOC && !workspace.tocItems.isEmpty {
-                    TOCSidebarView(items: workspace.tocItems)
-                        .frame(width: 250)
-                        .background(Color(nsColor: .controlBackgroundColor))
+                // Bottom zoom bar
+                if workspace.selectedTab != nil {
+                    ZoomBarView(workspace: workspace)
+                }
+            }
+            .toolbar {
+                ToolbarItem(id: "toc", placement: .automatic, showsByDefault: true) {
+                    Button {
+                        withAnimation {
+                            showTOC.toggle()
+                        }
+                    } label: {
+                        Image(systemName: "list.bullet.rectangle")
+                    }
+                    .help("Toggle Table of Contents")
                 }
             }
         }
@@ -69,18 +89,6 @@ public struct MainView: View {
             }
         } message: {
             Text(workspace.errorMessage ?? "An unknown error occurred")
-        }
-        .toolbar {
-            ToolbarItem(placement: .automatic) {
-                Button {
-                    withAnimation {
-                        showTOC.toggle()
-                    }
-                } label: {
-                    Image(systemName: showTOC ? "list.bullet.rectangle" : "list.bullet.rectangle")
-                }
-                .help("Toggle Table of Contents")
-            }
         }
         .onReceive(NotificationCenter.default.publisher(for: .toggleTOC)) { _ in
             withAnimation {
@@ -205,6 +213,58 @@ struct TabBarItem: View {
         .contentShape(Rectangle())
         .onTapGesture(perform: onSelect)
         .onHover { isHovering = $0 }
+    }
+}
+
+// MARK: - Zoom Bar
+
+struct ZoomBarView: View {
+    @ObservedObject var workspace: Workspace
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Spacer()
+
+            Button {
+                workspace.zoomOut()
+            } label: {
+                Image(systemName: "minus.magnifyingglass")
+                    .font(.system(size: 12))
+            }
+            .buttonStyle(.plain)
+            .foregroundColor(workspace.zoomLevel <= 0.5 ? .secondary.opacity(0.4) : .secondary)
+            .disabled(workspace.zoomLevel <= 0.5)
+            .help("Zoom Out (⌘-)")
+
+            Button {
+                workspace.resetZoom()
+            } label: {
+                Text(workspace.zoomPercent)
+                    .font(.system(size: 11, design: .monospaced))
+                    .frame(minWidth: 38)
+                    .foregroundStyle(workspace.zoomLevel == 1.0 ? Color.secondary : Color.accentColor)
+            }
+            .buttonStyle(.plain)
+            .help("Actual Size (⌘0)")
+
+            Button {
+                workspace.zoomIn()
+            } label: {
+                Image(systemName: "plus.magnifyingglass")
+                    .font(.system(size: 12))
+            }
+            .buttonStyle(.plain)
+            .foregroundColor(workspace.zoomLevel >= 3.0 ? .secondary.opacity(0.4) : .secondary)
+            .disabled(workspace.zoomLevel >= 3.0)
+            .help("Zoom In (⌘=)")
+
+            Spacer()
+        }
+        .frame(height: 28)
+        .background(Color(nsColor: .windowBackgroundColor))
+        .overlay(alignment: .top) {
+            Divider()
+        }
     }
 }
 

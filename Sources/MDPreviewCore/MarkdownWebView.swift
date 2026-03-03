@@ -7,13 +7,15 @@ public struct MarkdownWebView: NSViewRepresentable {
     public let contentID: UUID?
     public let customCSS: String
     public let fileLanguage: String
+    public let zoomLevel: Double
 
-    public init(markdownContent: String, baseURL: URL? = nil, contentID: UUID? = nil, customCSS: String = "", fileLanguage: String = "markdown") {
+    public init(markdownContent: String, baseURL: URL? = nil, contentID: UUID? = nil, customCSS: String = "", fileLanguage: String = "markdown", zoomLevel: Double = 1.0) {
         self.markdownContent = markdownContent
         self.baseURL = baseURL
         self.contentID = contentID
         self.customCSS = customCSS
         self.fileLanguage = fileLanguage
+        self.zoomLevel = zoomLevel
     }
 
     public func makeCoordinator() -> Coordinator {
@@ -43,6 +45,11 @@ public struct MarkdownWebView: NSViewRepresentable {
     public func updateNSView(_ webView: WKWebView, context: Context) {
         let tabChanged = context.coordinator.currentContentID != contentID
         context.coordinator.currentContentID = contentID
+
+        // Apply zoom level
+        if webView.pageZoom != zoomLevel {
+            webView.pageZoom = zoomLevel
+        }
 
         // If base URL changed, reload template
         if context.coordinator.baseURL != baseURL {

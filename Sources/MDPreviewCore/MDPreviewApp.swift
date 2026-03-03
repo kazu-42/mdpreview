@@ -169,6 +169,23 @@ private struct AppCommands: Commands {
 
         // MARK: View Menu
         CommandGroup(after: .toolbar) {
+            Button("Zoom In") {
+                workspace?.zoomIn()
+            }
+            .keyboardShortcut("=", modifiers: .command)
+
+            Button("Zoom Out") {
+                workspace?.zoomOut()
+            }
+            .keyboardShortcut("-", modifiers: .command)
+
+            Button("Actual Size") {
+                workspace?.resetZoom()
+            }
+            .keyboardShortcut("0", modifiers: .command)
+
+            Divider()
+
             Button("Toggle Sidebar") {
                 workspace?.toggleSidebar()
             }
